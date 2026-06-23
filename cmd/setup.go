@@ -27,7 +27,7 @@ func newSetupCmd() *cobra.Command {
 	var f setupFlags
 	cmd := &cobra.Command{
 		Use:   "setup",
-		Short: "Configure ui-shot and save the global config",
+		Short: "Configure uishot and save the global config",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runSetup(cmd.Context(), cmd, f)
 		},

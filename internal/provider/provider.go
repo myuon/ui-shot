@@ -76,7 +76,7 @@ func New(name string) (Provider, error) {
 	case "r2":
 		return &notImplementedProvider{name: "r2"}, nil
 	case "":
-		return nil, fmt.Errorf("no provider configured (run `ui-shot setup` or pass --provider)")
+		return nil, fmt.Errorf("no provider configured (run `uishot setup` or pass --provider)")
 	default:
 		return nil, fmt.Errorf("unknown provider %q (supported: gcs, s3, r2)", name)
 	}

@@ -59,19 +59,19 @@ func Default() *Config {
 
 // Path returns the path to the global config file.
 //
-//   - Windows: %APPDATA%\ui-shot\config.toml
-//   - macOS/Linux: ~/.config/ui-shot/config.toml
+//   - Windows: %APPDATA%\uishot\config.toml
+//   - macOS/Linux: ~/.config/uishot/config.toml
 func Path() (string, error) {
 	if runtime.GOOS == "windows" {
 		if appData := os.Getenv("APPDATA"); appData != "" {
-			return filepath.Join(appData, "ui-shot", "config.toml"), nil
+			return filepath.Join(appData, "uishot", "config.toml"), nil
 		}
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve home directory: %w", err)
 	}
-	return filepath.Join(home, ".config", "ui-shot", "config.toml"), nil
+	return filepath.Join(home, ".config", "uishot", "config.toml"), nil
 }
 
 // Load reads the config from the given path. If the file does not exist a

@@ -87,7 +87,7 @@ func runUpload(ctx context.Context, cmd *cobra.Command, f *uploadFlags) error {
 	}
 	res := config.Resolve(cfg, f.provider, f.bucket, f.baseURL, "", "", "")
 	if res.Provider == "" {
-		return errors.New("no provider configured (run `ui-shot setup` or pass --provider)")
+		return errors.New("no provider configured (run `uishot setup` or pass --provider)")
 	}
 
 	// Resolve repo / commit.

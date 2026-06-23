@@ -32,7 +32,7 @@ func firstNonEmpty(values ...string) string {
 func Resolve(cfg *Config, flagProvider, flagBucket, flagBaseURL, flagProject, flagProfile, flagAccountID string) Resolved {
 	provider := firstNonEmpty(
 		flagProvider,
-		os.Getenv("UI_SHOT_PROVIDER"),
+		os.Getenv("UISHOT_PROVIDER"),
 		cfg.Provider,
 	)
 
@@ -56,11 +56,11 @@ func Resolve(cfg *Config, flagProvider, flagBucket, flagBaseURL, flagProject, fl
 		cfgAccountID = cfg.R2.AccountID
 	}
 
-	r.Bucket = firstNonEmpty(flagBucket, os.Getenv("UI_SHOT_BUCKET"), cfgBucket)
-	r.BaseURL = firstNonEmpty(flagBaseURL, os.Getenv("UI_SHOT_BASE_URL"), cfgBaseURL)
-	r.ProjectID = firstNonEmpty(flagProject, os.Getenv("UI_SHOT_GCS_PROJECT_ID"), cfgProject)
+	r.Bucket = firstNonEmpty(flagBucket, os.Getenv("UISHOT_BUCKET"), cfgBucket)
+	r.BaseURL = firstNonEmpty(flagBaseURL, os.Getenv("UISHOT_BASE_URL"), cfgBaseURL)
+	r.ProjectID = firstNonEmpty(flagProject, os.Getenv("UISHOT_GCS_PROJECT_ID"), cfgProject)
 	r.Profile = firstNonEmpty(flagProfile, os.Getenv("AWS_PROFILE"), cfgProfile)
-	r.AccountID = firstNonEmpty(flagAccountID, os.Getenv("UI_SHOT_R2_ACCOUNT_ID"), cfgAccountID)
+	r.AccountID = firstNonEmpty(flagAccountID, os.Getenv("UISHOT_R2_ACCOUNT_ID"), cfgAccountID)
 
 	return r
 }

@@ -1,4 +1,4 @@
-// Package cmd implements the ui-shot CLI commands.
+// Package cmd implements the uishot CLI commands.
 package cmd
 
 import (
@@ -8,7 +8,7 @@ import (
 // NewRootCmd builds the root cobra command.
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "ui-shot",
+		Use:           "uishot",
 		Short:         "Upload UI screenshots and return a URL/Markdown for GitHub PR/Issue",
 		SilenceUsage:  true,
 		SilenceErrors: true,

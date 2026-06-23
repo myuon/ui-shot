@@ -51,7 +51,7 @@ func (p *gcsProvider) Setup(ctx context.Context, opts SetupOptions) (SetupResult
 		// Bucket already exists.
 	case errors.Is(err, storage.ErrBucketNotExist):
 		if opts.ProjectID == "" {
-			return SetupResult{}, errors.New("GCP project id is required to create the bucket (pass --project or set UI_SHOT_GCS_PROJECT_ID)")
+			return SetupResult{}, errors.New("GCP project id is required to create the bucket (pass --project or set UISHOT_GCS_PROJECT_ID)")
 		}
 		if cerr := bucket.Create(ctx, opts.ProjectID, nil); cerr != nil {
 			return SetupResult{}, fmt.Errorf("create bucket %q: %w", opts.Bucket, cerr)
@@ -74,7 +74,7 @@ func (p *gcsProvider) Setup(ctx context.Context, opts SetupOptions) (SetupResult
 
 func (p *gcsProvider) Upload(ctx context.Context, opts UploadOptions) (string, error) {
 	if opts.Bucket == "" {
-		return "", errors.New("bucket is not configured (run `ui-shot setup` or pass --bucket)")
+		return "", errors.New("bucket is not configured (run `uishot setup` or pass --bucket)")
 	}
 
 	f, err := os.Open(opts.FilePath)
@@ -114,7 +114,7 @@ func wrapGCSErr(err error) error {
 	var apiErr *googleapi.Error
 	if errors.As(err, &apiErr) {
 		if apiErr.Code == 404 {
-			return fmt.Errorf("%w (bucket may not exist; run `ui-shot setup`)", err)
+			return fmt.Errorf("%w (bucket may not exist; run `uishot setup`)", err)
 		}
 	}
 	return err

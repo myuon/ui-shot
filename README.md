@@ -1,6 +1,6 @@
-# ui-shot
+# uishot
 
-`ui-shot` is a Go CLI that uploads UI screenshots to an image store and prints a
+`uishot` is a Go CLI that uploads UI screenshots to an image store and prints a
 URL (or Markdown) you can paste straight into a GitHub PR or Issue.
 
 See [#1](https://github.com/myuon/ui-shot/issues/1) for the full spec.
@@ -8,7 +8,7 @@ See [#1](https://github.com/myuon/ui-shot/issues/1) for the full spec.
 ## Install / Build
 
 ```bash
-go build -o ui-shot .
+go build -o uishot .
 ```
 
 Requires Go 1.23+.
@@ -29,13 +29,13 @@ Requires Go 1.23+.
 
 ### Setup
 
-Stores the global config at `~/.config/ui-shot/config.toml`
-(`%APPDATA%\ui-shot\config.toml` on Windows).
+Stores the global config at `~/.config/uishot/config.toml`
+(`%APPDATA%\uishot\config.toml` on Windows).
 
 ```bash
-ui-shot setup --provider gcs
+uishot setup --provider gcs
 # or fully non-interactive:
-ui-shot setup --provider gcs \
+uishot setup --provider gcs \
   --project my-gcp-project \
   --bucket ui-shot-assets \
   --non-interactive
@@ -47,13 +47,13 @@ it does not exist, and saves the config.
 ### Upload
 
 ```bash
-ui-shot upload \
+uishot upload \
   --pr 123 \
   --name booking-detail \
   --file /tmp/booking-detail.png
 # => https://storage.googleapis.com/ui-shot-assets/owner/repo/pr-123/<sha>/booking-detail.png
 
-ui-shot upload --issue 45 --name detail --file shot.png --markdown
+uishot upload --issue 45 --name detail --file shot.png --markdown
 # => ![detail](https://storage.googleapis.com/...)
 ```
 
@@ -79,8 +79,8 @@ derived from the extension.
 command-line flags > environment variables > global config
 ```
 
-Environment variables: `UI_SHOT_PROVIDER`, `UI_SHOT_BUCKET`, `UI_SHOT_BASE_URL`,
-`UI_SHOT_GCS_PROJECT_ID`, plus the standard AWS/R2 variables for future
+Environment variables: `UISHOT_PROVIDER`, `UISHOT_BUCKET`, `UISHOT_BASE_URL`,
+`UISHOT_GCS_PROJECT_ID`, plus the standard AWS/R2 variables for future
 providers.
 
 ## Development
