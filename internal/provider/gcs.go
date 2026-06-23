@@ -9,10 +9,16 @@ import (
 
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/googleapi"
-	"google.golang.org/api/option"
 )
 
-const defaultGCSBaseURLPrefix = "https://storage.googleapis.com"
+// GCSBaseURLHost is the public host prefix for GCS objects. The default base
+// URL is GCSBaseURLHost + "/" + bucket.
+const GCSBaseURLHost = "https://storage.googleapis.com"
+
+// DefaultGCSBaseURL returns the default public base URL for the given bucket.
+func DefaultGCSBaseURL(bucket string) string {
+	return GCSBaseURLHost + "/" + bucket
+}
 
 // gcsProvider uploads to Google Cloud Storage using ADC.
 type gcsProvider struct{}
@@ -32,10 +38,9 @@ func (p *gcsProvider) Setup(ctx context.Context, opts SetupOptions) (SetupResult
 		return SetupResult{}, errors.New("bucket name is required for GCS setup")
 	}
 
-	clientOpts := []option.ClientOption{}
-	client, err := storage.NewClient(ctx, clientOpts...)
+	client, err := newGCSClient(ctx)
 	if err != nil {
-		return SetupResult{}, fmt.Errorf("no Application Default Credentials found; run `gcloud auth application-default login`: %w", err)
+		return SetupResult{}, err
 	}
 	defer client.Close()
 
@@ -57,7 +62,7 @@ func (p *gcsProvider) Setup(ctx context.Context, opts SetupOptions) (SetupResult
 
 	baseURL := opts.BaseURL
 	if baseURL == "" {
-		baseURL = fmt.Sprintf("%s/%s", defaultGCSBaseURLPrefix, opts.Bucket)
+		baseURL = DefaultGCSBaseURL(opts.Bucket)
 	}
 
 	return SetupResult{
@@ -99,7 +104,7 @@ func (p *gcsProvider) Upload(ctx context.Context, opts UploadOptions) (string, e
 
 	baseURL := opts.BaseURL
 	if baseURL == "" {
-		baseURL = fmt.Sprintf("%s/%s", defaultGCSBaseURLPrefix, opts.Bucket)
+		baseURL = DefaultGCSBaseURL(opts.Bucket)
 	}
 	return BuildURL(baseURL, opts.ObjectKey), nil
 }

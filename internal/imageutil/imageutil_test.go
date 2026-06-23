@@ -33,12 +33,3 @@ func TestContentType(t *testing.T) {
 		}
 	}
 }
-
-func TestIsSupported(t *testing.T) {
-	if !IsSupported("x.JPG") {
-		t.Error("expected x.JPG supported")
-	}
-	if IsSupported("x.bmp") {
-		t.Error("expected x.bmp unsupported")
-	}
-}

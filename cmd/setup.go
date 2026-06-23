@@ -55,23 +55,22 @@ func runSetup(ctx context.Context, cmd *cobra.Command, f setupFlags) error {
 	}
 
 	res := config.Resolve(cfg, f.provider, f.bucket, f.baseURL, f.project, f.profile, f.accountID)
-	prov := res.Provider
-	if prov == "" {
-		prov = promptDefault(cmd, f.nonInteractive, "Provider", "gcs")
+	if res.Provider == "" {
+		res.Provider = promptDefault(cmd, f.nonInteractive, "Provider", "gcs")
 	}
 
-	switch prov {
+	switch res.Provider {
 	case "gcs":
-		return setupGCS(ctx, cmd, f, cfg, path, prov)
+		return setupGCS(ctx, cmd, f, cfg, path, res)
 	case "s3", "r2":
-		return fmt.Errorf("provider %q is not implemented yet", prov)
+		return fmt.Errorf("provider %q is not implemented yet", res.Provider)
 	default:
-		return fmt.Errorf("unknown provider %q (supported: gcs, s3, r2)", prov)
+		return fmt.Errorf("unknown provider %q (supported: gcs, s3, r2)", res.Provider)
 	}
 }
 
-func setupGCS(ctx context.Context, cmd *cobra.Command, f setupFlags, cfg *config.Config, path, prov string) error {
-	res := config.Resolve(cfg, prov, f.bucket, f.baseURL, f.project, f.profile, f.accountID)
+func setupGCS(ctx context.Context, cmd *cobra.Command, f setupFlags, cfg *config.Config, path string, res config.Resolved) error {
+	prov := res.Provider
 
 	// Determine project candidate: --project / env / gcloud config.
 	projectID := res.ProjectID
@@ -88,7 +87,7 @@ func setupGCS(ctx context.Context, cmd *cobra.Command, f setupFlags, cfg *config
 
 	baseURL := res.BaseURL
 	if baseURL == "" {
-		baseURL = fmt.Sprintf("https://storage.googleapis.com/%s", bucket)
+		baseURL = provider.DefaultGCSBaseURL(bucket)
 	}
 	baseURL = promptDefault(cmd, f.nonInteractive, "Base URL", baseURL)
 
@@ -112,7 +111,11 @@ func setupGCS(ctx context.Context, cmd *cobra.Command, f setupFlags, cfg *config
 	if cfg.Defaults.RepoPrefixMode == "" {
 		cfg.Defaults.RepoPrefixMode = "git_remote"
 	}
-	cfg.GCS.ProjectID = result.ProjectID
+	// For an existing bucket no project id is required, so result.ProjectID
+	// may be empty; keep any previously saved value rather than blanking it.
+	if result.ProjectID != "" {
+		cfg.GCS.ProjectID = result.ProjectID
+	}
 	cfg.GCS.Bucket = result.Bucket
 	cfg.GCS.BaseURL = result.BaseURL
 

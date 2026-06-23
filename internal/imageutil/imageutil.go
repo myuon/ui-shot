@@ -33,9 +33,3 @@ func ContentType(path string) (string, error) {
 	}
 	return ct, nil
 }
-
-// IsSupported reports whether the file extension is supported.
-func IsSupported(path string) bool {
-	_, ok := contentTypes[Ext(path)]
-	return ok
-}
