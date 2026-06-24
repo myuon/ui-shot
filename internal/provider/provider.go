@@ -7,6 +7,20 @@ import (
 	"strings"
 )
 
+// PublicPolicy controls how setup treats public-read access on the bucket.
+type PublicPolicy int
+
+const (
+	// PublicAuto is the default: a newly created bucket is made public, but an
+	// existing non-public bucket is only made public if ConfirmPublic returns
+	// true (and is left private if ConfirmPublic is nil).
+	PublicAuto PublicPolicy = iota
+	// PublicForce makes the bucket public without confirmation (--public).
+	PublicForce
+	// PublicNever never grants public read (--no-public).
+	PublicNever
+)
+
 // SetupOptions carries the resolved configuration for a setup run.
 type SetupOptions struct {
 	Provider       string
@@ -16,6 +30,14 @@ type SetupOptions struct {
 	Profile        string // S3
 	AccountID      string // R2
 	NonInteractive bool
+
+	// PublicPolicy controls public-read configuration (GCS). Defaults to
+	// PublicAuto (the zero value).
+	PublicPolicy PublicPolicy
+	// ConfirmPublic, if set, is called before making an *existing* bucket
+	// public under PublicAuto. It must return true to proceed. It is never
+	// called for a freshly created bucket nor under PublicForce/PublicNever.
+	ConfirmPublic func() bool
 }
 
 // UploadOptions carries everything needed to upload one object.
@@ -43,6 +65,16 @@ type SetupResult struct {
 	ProjectID string
 	Bucket    string
 	BaseURL   string
+
+	// BucketCreated is true when setup created the bucket during this run.
+	BucketCreated bool
+	// MadePublic is true when setup granted public read during this run.
+	MadePublic bool
+	// AlreadyPublic is true when the bucket was already publicly readable.
+	AlreadyPublic bool
+	// PublicSkipped is true when an existing non-public bucket was left
+	// private (no confirmation / --no-public), so URLs may return 403.
+	PublicSkipped bool
 }
 
 // ObjectKey builds the provider-agnostic object key.

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 
@@ -21,6 +22,8 @@ type setupFlags struct {
 	profile        string
 	accountID      string
 	nonInteractive bool
+	public         bool
+	noPublic       bool
 }
 
 func newSetupCmd() *cobra.Command {
@@ -51,7 +54,22 @@ Prompts for any value not passed as a flag (skip prompts with --non-interactive)
 	cmd.Flags().StringVar(&f.profile, "profile", "", "S3 AWS profile")
 	cmd.Flags().StringVar(&f.accountID, "account-id", "", "R2 Cloudflare account id")
 	cmd.Flags().BoolVar(&f.nonInteractive, "non-interactive", false, "do not prompt for input")
+	cmd.Flags().BoolVar(&f.public, "public", false, "make the bucket publicly readable without confirmation (GCS)")
+	cmd.Flags().BoolVar(&f.noPublic, "no-public", false, "do not grant public read on the bucket (GCS)")
+	cmd.MarkFlagsMutuallyExclusive("public", "no-public")
 	return cmd
+}
+
+// publicPolicy maps the --public/--no-public flags to a provider.PublicPolicy.
+func (f setupFlags) publicPolicy() provider.PublicPolicy {
+	switch {
+	case f.noPublic:
+		return provider.PublicNever
+	case f.public:
+		return provider.PublicForce
+	default:
+		return provider.PublicAuto
+	}
 }
 
 const defaultGCSBucket = "ui-shot-assets"
@@ -103,6 +121,19 @@ func setupGCS(ctx context.Context, cmd *cobra.Command, f setupFlags, cfg *config
 	}
 	baseURL = promptDefault(cmd, f.nonInteractive, "Base URL", baseURL)
 
+	out := cmd.OutOrStdout()
+	policy := f.publicPolicy()
+
+	// confirmPublic is only consulted by the provider for an *existing*,
+	// non-public bucket under the default (auto) policy. In non-interactive
+	// mode we never confirm: leave it private rather than risk exposing data.
+	var confirmPublic func() bool
+	if !f.nonInteractive && policy == provider.PublicAuto {
+		confirmPublic = func() bool {
+			return promptYesNo(cmd, "This existing bucket is not publicly readable. Make it public (grant allUsers roles/storage.objectViewer)?")
+		}
+	}
+
 	p, err := provider.New(prov)
 	if err != nil {
 		return err
@@ -113,10 +144,14 @@ func setupGCS(ctx context.Context, cmd *cobra.Command, f setupFlags, cfg *config
 		Bucket:         bucket,
 		BaseURL:        baseURL,
 		NonInteractive: f.nonInteractive,
+		PublicPolicy:   policy,
+		ConfirmPublic:  confirmPublic,
 	})
 	if err != nil {
 		return err
 	}
+
+	reportPublicState(out, result)
 
 	cfg.Version = 1
 	cfg.Provider = prov
@@ -136,6 +171,36 @@ func setupGCS(ctx context.Context, cmd *cobra.Command, f setupFlags, cfg *config
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Saved config to %s\n", path)
 	return nil
+}
+
+// reportPublicState prints a message describing the bucket's public-read state
+// after setup, so the user knows whether the returned URLs will be accessible.
+func reportPublicState(out io.Writer, r provider.SetupResult) {
+	switch {
+	case r.MadePublic && r.BucketCreated:
+		fmt.Fprintln(out, "Bucket created and configured for public read (allUsers: roles/storage.objectViewer). Uploaded image URLs are publicly accessible.")
+	case r.MadePublic:
+		fmt.Fprintln(out, "Granted public read on the bucket (allUsers: roles/storage.objectViewer). Uploaded image URLs are publicly accessible.")
+	case r.AlreadyPublic:
+		fmt.Fprintln(out, "Bucket is already publicly readable. Uploaded image URLs are accessible.")
+	case r.PublicSkipped:
+		fmt.Fprintln(out, "Warning: the bucket is NOT publicly readable, so uploaded image URLs may return HTTP 403.")
+		fmt.Fprintln(out, "To make it public later, run `uishot setup --public` or grant allUsers roles/storage.objectViewer on the bucket.")
+	}
+}
+
+// promptYesNo asks a yes/no question, defaulting to No (safe choice). It is
+// only called in interactive mode.
+func promptYesNo(cmd *cobra.Command, question string) bool {
+	fmt.Fprintf(cmd.OutOrStdout(), "%s [y/N]: ", question)
+	reader := bufio.NewReader(cmd.InOrStdin())
+	line, _ := reader.ReadString('\n')
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 // gcloudProject returns `gcloud config get-value project` or "".
