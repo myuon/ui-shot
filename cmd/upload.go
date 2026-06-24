@@ -36,9 +36,8 @@ func newUploadCmd() *cobra.Command {
 a GitHub PR or Issue. Open the returned URL to view it.
 
 Pass exactly one of --pr or --issue, plus --name and --file. --repo and
---commit are inferred from the git remote and HEAD when unset. Supported
-extensions: .png .jpg .jpeg .webp. Settings precedence: flags > env vars >
-global config. See the README to list uploaded objects (e.g. gcloud storage ls).`,
+--commit are inferred from the git remote and HEAD when unset. See the README
+for supported extensions, settings precedence, and listing uploaded objects.`,
 		Example: `  uishot upload --pr 123 --name booking-detail --file ./shot.png
   # => https://storage.googleapis.com/ui-shot-assets/owner/repo/pr-123/<sha>/booking-detail.png
 

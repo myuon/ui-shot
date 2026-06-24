@@ -13,8 +13,8 @@ func NewRootCmd() *cobra.Command {
 		Long: `uishot uploads a UI screenshot to an image store and prints a URL (or
 Markdown) you can paste straight into a GitHub PR or Issue.
 
-Typical workflow: run setup once, then upload per screenshot. Open the
-returned URL to view the image. See the README for full details.`,
+Typical workflow: run setup once, then upload per screenshot.
+See the README for full details.`,
 		Example: `  # 1. Configure once (GCS provider)
   uishot setup --provider gcs
 
