@@ -12,6 +12,14 @@ type Resolved struct {
 	ProjectID string // GCS project id
 	Profile   string // S3 profile
 	AccountID string // R2 account id
+
+	// BaseURLExplicit is true when BaseURL came from a command-line flag or
+	// environment variable (an explicit user choice) rather than being read
+	// from the saved config. When it is false the base URL should be treated
+	// as a default that must track the resolved bucket: otherwise changing the
+	// bucket (e.g. re-running setup with a new --bucket) while keeping the old
+	// config base_url produces URLs pointing at the wrong bucket.
+	BaseURLExplicit bool
 }
 
 // Source values for a single setting, in precedence order. The first
@@ -57,7 +65,9 @@ func Resolve(cfg *Config, flagProvider, flagBucket, flagBaseURL, flagProject, fl
 	}
 
 	r.Bucket = firstNonEmpty(flagBucket, os.Getenv("UISHOT_BUCKET"), cfgBucket)
-	r.BaseURL = firstNonEmpty(flagBaseURL, os.Getenv("UISHOT_BASE_URL"), cfgBaseURL)
+	envBaseURL := os.Getenv("UISHOT_BASE_URL")
+	r.BaseURL = firstNonEmpty(flagBaseURL, envBaseURL, cfgBaseURL)
+	r.BaseURLExplicit = flagBaseURL != "" || envBaseURL != ""
 	r.ProjectID = firstNonEmpty(flagProject, os.Getenv("UISHOT_GCS_PROJECT_ID"), cfgProject)
 	r.Profile = firstNonEmpty(flagProfile, os.Getenv("AWS_PROFILE"), cfgProfile)
 	r.AccountID = firstNonEmpty(flagAccountID, os.Getenv("UISHOT_R2_ACCOUNT_ID"), cfgAccountID)

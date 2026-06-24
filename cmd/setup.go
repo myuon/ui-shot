@@ -74,6 +74,18 @@ func (f setupFlags) publicPolicy() provider.PublicPolicy {
 
 const defaultGCSBucket = "ui-shot-assets"
 
+// gcsBaseURLDefault returns the base URL to present as the setup default for
+// the given bucket. An explicitly provided base URL (--base-url or
+// UISHOT_BASE_URL) is honored as-is; otherwise the base URL is derived from the
+// final bucket so it always tracks the bucket and never points at a previously
+// configured one (issue #7).
+func gcsBaseURLDefault(res config.Resolved, bucket string) string {
+	if res.BaseURLExplicit {
+		return res.BaseURL
+	}
+	return provider.DefaultGCSBaseURL(bucket)
+}
+
 func runSetup(ctx context.Context, cmd *cobra.Command, f setupFlags) error {
 	path, err := config.Path()
 	if err != nil {
@@ -115,10 +127,12 @@ func setupGCS(ctx context.Context, cmd *cobra.Command, f setupFlags, cfg *config
 	}
 	bucket = promptDefault(cmd, f.nonInteractive, "Bucket name", bucket)
 
-	baseURL := res.BaseURL
-	if baseURL == "" {
-		baseURL = provider.DefaultGCSBaseURL(bucket)
-	}
+	// Resolve the base URL default. When the user did not explicitly pass a
+	// base URL (via --base-url or UISHOT_BASE_URL), derive it from the final
+	// bucket so that changing the bucket also updates the base URL. Reusing a
+	// stale config base_url here would leave the saved base URL pointing at the
+	// previous bucket (issue #7).
+	baseURL := gcsBaseURLDefault(res, bucket)
 	baseURL = promptDefault(cmd, f.nonInteractive, "Base URL", baseURL)
 
 	out := cmd.OutOrStdout()
