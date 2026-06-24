@@ -49,6 +49,7 @@ func TestResolveBaseURLExplicit(t *testing.T) {
 	cfg.GCS.BaseURL = "https://storage.googleapis.com/bucketA"
 
 	t.Run("base url from config is not explicit", func(t *testing.T) {
+		t.Setenv("UISHOT_PROVIDER", "")
 		t.Setenv("UISHOT_BUCKET", "")
 		t.Setenv("UISHOT_BASE_URL", "")
 		got := Resolve(cfg, "", "", "", "", "", "")
@@ -58,12 +59,16 @@ func TestResolveBaseURLExplicit(t *testing.T) {
 		if got.BaseURLExplicit {
 			t.Error("BaseURLExplicit = true for config-sourced base URL, want false")
 		}
+		if got.ConfigBucket != "bucketA" || got.ConfigBaseURL != "https://storage.googleapis.com/bucketA" {
+			t.Errorf("config snapshot wrong: ConfigBucket=%q ConfigBaseURL=%q", got.ConfigBucket, got.ConfigBaseURL)
+		}
 	})
 
 	// Regression for issue #7: re-running setup with a new --bucket but no
 	// --base-url must leave BaseURL non-explicit so setup re-derives it from
 	// the new bucket instead of keeping the stale config base_url.
 	t.Run("new bucket flag without base url stays non-explicit", func(t *testing.T) {
+		t.Setenv("UISHOT_PROVIDER", "")
 		t.Setenv("UISHOT_BUCKET", "")
 		t.Setenv("UISHOT_BASE_URL", "")
 		got := Resolve(cfg, "", "bucketB", "", "", "", "")
@@ -73,9 +78,13 @@ func TestResolveBaseURLExplicit(t *testing.T) {
 		if got.BaseURLExplicit {
 			t.Error("BaseURLExplicit = true when only --bucket changed, want false")
 		}
+		if got.ConfigBucket != "bucketA" {
+			t.Errorf("ConfigBucket = %q, want bucketA", got.ConfigBucket)
+		}
 	})
 
 	t.Run("base url flag is explicit", func(t *testing.T) {
+		t.Setenv("UISHOT_PROVIDER", "")
 		t.Setenv("UISHOT_BUCKET", "")
 		t.Setenv("UISHOT_BASE_URL", "")
 		got := Resolve(cfg, "", "bucketB", "https://cdn.example.com", "", "", "")
@@ -88,6 +97,7 @@ func TestResolveBaseURLExplicit(t *testing.T) {
 	})
 
 	t.Run("base url env var is explicit", func(t *testing.T) {
+		t.Setenv("UISHOT_PROVIDER", "")
 		t.Setenv("UISHOT_BUCKET", "")
 		t.Setenv("UISHOT_BASE_URL", "https://env.example.com")
 		got := Resolve(cfg, "", "", "", "", "", "")

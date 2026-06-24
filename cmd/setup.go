@@ -75,13 +75,22 @@ func (f setupFlags) publicPolicy() provider.PublicPolicy {
 const defaultGCSBucket = "ui-shot-assets"
 
 // gcsBaseURLDefault returns the base URL to present as the setup default for
-// the given bucket. An explicitly provided base URL (--base-url or
-// UISHOT_BASE_URL) is honored as-is; otherwise the base URL is derived from the
-// final bucket so it always tracks the bucket and never points at a previously
-// configured one (issue #7).
+// the final (post-prompt) bucket.
+//
+//   - An explicitly provided base URL (--base-url or UISHOT_BASE_URL) is
+//     honored as-is (highest precedence, unchanged behavior).
+//   - Otherwise, if the final bucket is unchanged from the saved config and the
+//     config has a non-empty base URL, that value is preserved. This keeps a
+//     custom base URL (e.g. a CDN host not derivable from the bucket) intact.
+//   - Otherwise (the bucket changed, or there is no saved base URL) the base URL
+//     is derived from the final bucket so it always tracks the bucket and never
+//     points at a previously configured one (issue #7).
 func gcsBaseURLDefault(res config.Resolved, bucket string) string {
 	if res.BaseURLExplicit {
 		return res.BaseURL
+	}
+	if bucket == res.ConfigBucket && res.ConfigBaseURL != "" {
+		return res.ConfigBaseURL
 	}
 	return provider.DefaultGCSBaseURL(bucket)
 }

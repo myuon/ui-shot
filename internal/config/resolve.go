@@ -20,6 +20,15 @@ type Resolved struct {
 	// bucket (e.g. re-running setup with a new --bucket) while keeping the old
 	// config base_url produces URLs pointing at the wrong bucket.
 	BaseURLExplicit bool
+
+	// ConfigBucket and ConfigBaseURL are the raw values read from the saved
+	// config for the resolved provider (empty if unset). They let setup decide
+	// whether the bucket actually changed since it was last saved, so that a
+	// custom config base_url (e.g. a CDN host that is not derivable from the
+	// bucket) is preserved when the bucket is unchanged, while a changed bucket
+	// re-derives the base URL (issue #7).
+	ConfigBucket  string
+	ConfigBaseURL string
 }
 
 // Source values for a single setting, in precedence order. The first
@@ -71,6 +80,8 @@ func Resolve(cfg *Config, flagProvider, flagBucket, flagBaseURL, flagProject, fl
 	r.ProjectID = firstNonEmpty(flagProject, os.Getenv("UISHOT_GCS_PROJECT_ID"), cfgProject)
 	r.Profile = firstNonEmpty(flagProfile, os.Getenv("AWS_PROFILE"), cfgProfile)
 	r.AccountID = firstNonEmpty(flagAccountID, os.Getenv("UISHOT_R2_ACCOUNT_ID"), cfgAccountID)
+	r.ConfigBucket = cfgBucket
+	r.ConfigBaseURL = cfgBaseURL
 
 	return r
 }
