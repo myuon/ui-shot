@@ -8,7 +8,15 @@ See [#1](https://github.com/myuon/ui-shot/issues/1) for the full spec.
 ## Install / Build
 
 ```bash
-go build -o uishot .
+go install github.com/myuon/ui-shot/cmd/uishot@latest
+```
+
+This installs a binary named `uishot`.
+
+To build locally:
+
+```bash
+go build -o uishot ./cmd/uishot
 ```
 
 Requires Go 1.23+.
@@ -119,4 +127,5 @@ providers.
 go build ./...
 go vet ./...
 go test ./...
+go build -o uishot ./cmd/uishot
 ```
