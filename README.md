@@ -19,7 +19,7 @@ To build locally:
 go build -o uishot ./cmd/uishot
 ```
 
-Requires Go 1.23+.
+Requires Go 1.25+.
 
 ## Providers
 
