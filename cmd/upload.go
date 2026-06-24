@@ -32,6 +32,18 @@ func newUploadCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "upload",
 		Short: "Upload an image and print its URL (or Markdown)",
+		Long: `Upload an image and print a URL (or Markdown with --markdown) to paste into
+a GitHub PR or Issue. Open the returned URL to view it.
+
+Pass exactly one of --pr or --issue, plus --name and --file. --repo and
+--commit are inferred from the git remote and HEAD when unset. Supported
+extensions: .png .jpg .jpeg .webp. Settings precedence: flags > env vars >
+global config. See the README to list uploaded objects (e.g. gcloud storage ls).`,
+		Example: `  uishot upload --pr 123 --name booking-detail --file ./shot.png
+  # => https://storage.googleapis.com/ui-shot-assets/owner/repo/pr-123/<sha>/booking-detail.png
+
+  uishot upload --issue 45 --name detail --file shot.png --markdown
+  # => ![detail](https://storage.googleapis.com/...)`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runUpload(cmd.Context(), cmd, &f)
 		},
