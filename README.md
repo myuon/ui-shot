@@ -62,6 +62,15 @@ uishot upload --issue 45 --name detail --file shot.png --markdown
 - `--commit` defaults to `git rev-parse HEAD`.
 - Supported extensions: `.png .jpg .jpeg .webp`.
 
+### Checking uploaded images
+
+Open the URL printed by `upload` in a browser, or paste it into the PR/Issue.
+To list what is already stored, query the bucket directly, e.g. for GCS:
+
+```bash
+gcloud storage ls gs://<bucket>/<owner>/<repo>/...
+```
+
 ### Object key
 
 ```

@@ -28,6 +28,18 @@ func newSetupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "setup",
 		Short: "Configure uishot and save the global config",
+		Long: `Configure the storage provider (bucket, base URL, project) and save it to
+the global config at ~/.config/uishot/config.toml.
+
+GCS requires Application Default Credentials: run
+"gcloud auth application-default login" or set GOOGLE_APPLICATION_CREDENTIALS.
+Prompts for any value not passed as a flag (skip prompts with --non-interactive).`,
+		Example: `  # Interactive
+  uishot setup --provider gcs
+
+  # Non-interactive
+  uishot setup --provider gcs --project my-gcp-project \
+    --bucket ui-shot-assets --non-interactive`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runSetup(cmd.Context(), cmd, f)
 		},
