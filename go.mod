@@ -3,6 +3,7 @@ module github.com/myuon/ui-shot
 go 1.25.8
 
 require (
+	cloud.google.com/go/iam v1.7.0
 	cloud.google.com/go/storage v1.62.3
 	github.com/BurntSushi/toml v1.6.0
 	github.com/spf13/cobra v1.10.2
@@ -15,7 +16,6 @@ require (
 	cloud.google.com/go/auth v0.20.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
-	cloud.google.com/go/iam v1.7.0 // indirect
 	cloud.google.com/go/monitoring v1.24.3 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.31.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.55.0 // indirect

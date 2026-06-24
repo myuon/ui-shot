@@ -44,6 +44,15 @@ uishot setup --provider gcs \
 `setup` verifies ADC, decides the project/bucket/base-url, creates the bucket if
 it does not exist, and saves the config.
 
+> [!IMPORTANT]
+> `setup` configures the bucket for **public read**: it grants
+> `allUsers` the `roles/storage.objectViewer` role (and leaves public access
+> prevention inherited rather than enforced). This is required so the returned
+> `https://storage.googleapis.com/...` URLs are accessible from GitHub;
+> otherwise they return HTTP 403. Existing buckets are also granted this binding
+> if they are not already public. Do not point `setup` at a bucket holding
+> private data.
+
 ### Upload
 
 ```bash

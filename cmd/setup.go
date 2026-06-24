@@ -103,6 +103,8 @@ func setupGCS(ctx context.Context, cmd *cobra.Command, f setupFlags, cfg *config
 	}
 	baseURL = promptDefault(cmd, f.nonInteractive, "Base URL", baseURL)
 
+	fmt.Fprintln(cmd.OutOrStdout(), "Note: this bucket will be configured for public read (allUsers: roles/storage.objectViewer) so the uploaded image URLs are accessible.")
+
 	p, err := provider.New(prov)
 	if err != nil {
 		return err
