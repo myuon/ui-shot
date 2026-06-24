@@ -53,7 +53,8 @@ func (p *gcsProvider) Setup(ctx context.Context, opts SetupOptions) (SetupResult
 	defer client.Close()
 
 	bucket := client.Bucket(opts.Bucket)
-	_, err = bucket.Attrs(ctx)
+	attrs, err := bucket.Attrs(ctx)
+	created := false
 	switch {
 	case err == nil:
 		// Bucket already exists.
@@ -63,32 +64,91 @@ func (p *gcsProvider) Setup(ctx context.Context, opts SetupOptions) (SetupResult
 		}
 		// Create the bucket with public access prevention left inherited so
 		// that the public-read IAM binding below can take effect.
-		attrs := &storage.BucketAttrs{
+		newAttrs := &storage.BucketAttrs{
 			PublicAccessPrevention: storage.PublicAccessPreventionInherited,
 		}
-		if cerr := bucket.Create(ctx, opts.ProjectID, attrs); cerr != nil {
+		if cerr := bucket.Create(ctx, opts.ProjectID, newAttrs); cerr != nil {
 			return SetupResult{}, fmt.Errorf("create bucket %q: %w", opts.Bucket, cerr)
+		}
+		created = true
+		if a, aerr := bucket.Attrs(ctx); aerr == nil {
+			attrs = a
 		}
 	default:
 		return SetupResult{}, fmt.Errorf("check bucket %q: %w", opts.Bucket, err)
-	}
-
-	// Ensure the bucket is publicly readable so the returned URLs resolve
-	// (otherwise objects return HTTP 403). Granting is idempotent.
-	if err := ensurePublicRead(ctx, bucket.IAM().V3()); err != nil {
-		return SetupResult{}, fmt.Errorf("grant public read on bucket %q: %w", opts.Bucket, err)
 	}
 
 	baseURL := opts.BaseURL
 	if baseURL == "" {
 		baseURL = DefaultGCSBaseURL(opts.Bucket)
 	}
+	res := SetupResult{
+		ProjectID:     opts.ProjectID,
+		Bucket:        opts.Bucket,
+		BaseURL:       baseURL,
+		BucketCreated: created,
+	}
 
-	return SetupResult{
-		ProjectID: opts.ProjectID,
-		Bucket:    opts.Bucket,
-		BaseURL:   baseURL,
-	}, nil
+	if err := p.configurePublicRead(ctx, bucket, attrs, created, opts, &res); err != nil {
+		if created {
+			return SetupResult{}, fmt.Errorf("bucket %q was created but configuring public read failed: %w", opts.Bucket, err)
+		}
+		return SetupResult{}, fmt.Errorf("configure public read on bucket %q: %w", opts.Bucket, err)
+	}
+
+	return res, nil
+}
+
+// configurePublicRead decides, based on the public policy and whether the
+// bucket was freshly created, whether to grant public read. It is safe by
+// default: an existing non-public bucket is never made public without an
+// explicit confirmation (or --public). Results are reported via res.
+func (p *gcsProvider) configurePublicRead(ctx context.Context, bucket *storage.BucketHandle, attrs *storage.BucketAttrs, created bool, opts SetupOptions, res *SetupResult) error {
+	handle := bucket.IAM().V3()
+	policy, err := handle.Policy(ctx)
+	if err != nil {
+		return err
+	}
+	if hasPublicReadBinding(policy) {
+		res.AlreadyPublic = true
+		return nil
+	}
+
+	// Explicit --no-public: never grant, leave private.
+	if opts.PublicPolicy == PublicNever {
+		res.PublicSkipped = true
+		return nil
+	}
+
+	// Refuse early with a clear message if public access prevention is
+	// enforced, since granting allUsers would fail with an opaque API error.
+	if attrs != nil && attrs.PublicAccessPrevention == storage.PublicAccessPreventionEnforced {
+		return errors.New("bucket has public access prevention enforced; set it to inherited to allow public read")
+	}
+
+	// Decide whether we're allowed to make this bucket public.
+	switch {
+	case created:
+		// Freshly created asset bucket: public read is the intended default.
+	case opts.PublicPolicy == PublicForce:
+		// Explicit --public on an existing bucket.
+	case opts.ConfirmPublic != nil && opts.ConfirmPublic():
+		// User confirmed interactively.
+	default:
+		// Existing, non-public bucket with no explicit go-ahead: leave private.
+		res.PublicSkipped = true
+		return nil
+	}
+
+	if !addPublicReadBinding(policy) {
+		res.AlreadyPublic = true
+		return nil
+	}
+	if err := handle.SetPolicy(ctx, policy); err != nil {
+		return err
+	}
+	res.MadePublic = true
+	return nil
 }
 
 func (p *gcsProvider) Upload(ctx context.Context, opts UploadOptions) (string, error) {
@@ -128,33 +188,33 @@ func (p *gcsProvider) Upload(ctx context.Context, opts UploadOptions) (string, e
 	return BuildURL(baseURL, opts.ObjectKey), nil
 }
 
-// iamV3Handle is the subset of *iam.Handle3 used to manage the bucket policy.
-// It is an interface so the public-read logic can be unit tested without GCS.
-type iamV3Handle interface {
-	Policy(ctx context.Context) (*iam.Policy3, error)
-	SetPolicy(ctx context.Context, policy *iam.Policy3) error
-}
-
-// ensurePublicRead grants allUsers the object-viewer role on the bucket policy
-// if it is not already granted. It is a no-op when the binding already exists.
-func ensurePublicRead(ctx context.Context, h iamV3Handle) error {
-	policy, err := h.Policy(ctx)
-	if err != nil {
-		return err
+// hasPublicReadBinding reports whether the policy already grants allUsers the
+// object-viewer role via an *unconditional* binding (Condition == nil). A
+// conditional grant does not make objects unconditionally world-readable, so it
+// is not treated as "already public".
+func hasPublicReadBinding(policy *iam.Policy3) bool {
+	for _, b := range policy.Bindings {
+		if b.Role != publicReadRole || b.Condition != nil {
+			continue
+		}
+		for _, m := range b.Members {
+			if m == allUsers {
+				return true
+			}
+		}
 	}
-	if !addPublicReadBinding(policy) {
-		// Already public; nothing to change.
-		return nil
-	}
-	return h.SetPolicy(ctx, policy)
+	return false
 }
 
 // addPublicReadBinding adds an allUsers/roles/storage.objectViewer binding to
-// the policy in place. It reports whether the policy was modified (false when
-// the binding already exists).
+// the policy in place. It only considers/extends *unconditional* bindings
+// (Condition == nil): conditional roles/storage.objectViewer bindings are left
+// untouched, and a new unconditional binding is added if none exists. It
+// reports whether the policy was modified (false when allUsers is already
+// granted unconditionally).
 func addPublicReadBinding(policy *iam.Policy3) bool {
 	for _, b := range policy.Bindings {
-		if b.Role != publicReadRole {
+		if b.Role != publicReadRole || b.Condition != nil {
 			continue
 		}
 		for _, m := range b.Members {

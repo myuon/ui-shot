@@ -1,17 +1,16 @@
 package provider
 
 import (
-	"context"
-	"errors"
 	"testing"
 
 	"cloud.google.com/go/iam"
 	iampb "cloud.google.com/go/iam/apiv1/iampb"
+	expr "google.golang.org/genproto/googleapis/type/expr"
 )
 
 func memberOfRole(policy *iam.Policy3, role string) []string {
 	for _, b := range policy.Bindings {
-		if b.Role == role {
+		if b.Role == role && b.Condition == nil {
 			return b.Members
 		}
 	}
@@ -27,6 +26,59 @@ func hasMember(members []string, want string) bool {
 	return false
 }
 
+func TestHasPublicReadBinding(t *testing.T) {
+	tests := []struct {
+		name   string
+		policy *iam.Policy3
+		want   bool
+	}{
+		{
+			name:   "empty",
+			policy: &iam.Policy3{},
+			want:   false,
+		},
+		{
+			name: "unconditional allUsers",
+			policy: &iam.Policy3{Bindings: []*iampb.Binding{
+				{Role: publicReadRole, Members: []string{allUsers}},
+			}},
+			want: true,
+		},
+		{
+			name: "conditional allUsers is not public",
+			policy: &iam.Policy3{Bindings: []*iampb.Binding{
+				{
+					Role:      publicReadRole,
+					Members:   []string{allUsers},
+					Condition: &expr.Expr{Expression: "true"},
+				},
+			}},
+			want: false,
+		},
+		{
+			name: "other member only",
+			policy: &iam.Policy3{Bindings: []*iampb.Binding{
+				{Role: publicReadRole, Members: []string{"user:alice@example.com"}},
+			}},
+			want: false,
+		},
+		{
+			name: "other role",
+			policy: &iam.Policy3{Bindings: []*iampb.Binding{
+				{Role: "roles/storage.admin", Members: []string{allUsers}},
+			}},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := hasPublicReadBinding(tt.policy); got != tt.want {
+				t.Errorf("hasPublicReadBinding = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAddPublicReadBinding(t *testing.T) {
 	t.Run("empty policy adds binding", func(t *testing.T) {
 		policy := &iam.Policy3{}
@@ -38,7 +90,7 @@ func TestAddPublicReadBinding(t *testing.T) {
 		}
 	})
 
-	t.Run("existing binding is a no-op", func(t *testing.T) {
+	t.Run("existing unconditional binding is a no-op", func(t *testing.T) {
 		policy := &iam.Policy3{
 			Bindings: []*iampb.Binding{
 				{Role: publicReadRole, Members: []string{allUsers}},
@@ -47,13 +99,12 @@ func TestAddPublicReadBinding(t *testing.T) {
 		if addPublicReadBinding(policy) {
 			t.Error("expected no modification when binding already exists")
 		}
-		members := memberOfRole(policy, publicReadRole)
-		if got := len(members); got != 1 {
-			t.Errorf("members = %v, want exactly [allUsers]", members)
+		if got := len(memberOfRole(policy, publicReadRole)); got != 1 {
+			t.Errorf("members len = %d, want 1", got)
 		}
 	})
 
-	t.Run("appends allUsers to existing role binding", func(t *testing.T) {
+	t.Run("appends allUsers to existing unconditional role binding", func(t *testing.T) {
 		policy := &iam.Policy3{
 			Bindings: []*iampb.Binding{
 				{Role: publicReadRole, Members: []string{"user:alice@example.com"}},
@@ -65,6 +116,39 @@ func TestAddPublicReadBinding(t *testing.T) {
 		members := memberOfRole(policy, publicReadRole)
 		if !hasMember(members, allUsers) || !hasMember(members, "user:alice@example.com") {
 			t.Errorf("members = %v, want both alice and allUsers", members)
+		}
+	})
+
+	t.Run("does not touch a conditional binding; adds a new unconditional one", func(t *testing.T) {
+		cond := &expr.Expr{Expression: "resource.name.startsWith('x')"}
+		policy := &iam.Policy3{
+			Bindings: []*iampb.Binding{
+				{Role: publicReadRole, Members: []string{"user:alice@example.com"}, Condition: cond},
+			},
+		}
+		if !addPublicReadBinding(policy) {
+			t.Fatal("expected policy to be modified")
+		}
+		// The conditional binding must be left untouched.
+		var conditional, unconditional *iampb.Binding
+		for _, b := range policy.Bindings {
+			if b.Role != publicReadRole {
+				continue
+			}
+			if b.Condition != nil {
+				conditional = b
+			} else {
+				unconditional = b
+			}
+		}
+		if conditional == nil {
+			t.Fatal("conditional binding was dropped")
+		}
+		if hasMember(conditional.Members, allUsers) {
+			t.Error("allUsers wrongly appended to conditional binding")
+		}
+		if unconditional == nil || !hasMember(unconditional.Members, allUsers) {
+			t.Errorf("expected a new unconditional binding granting allUsers; got %+v", policy.Bindings)
 		}
 	})
 
@@ -82,75 +166,6 @@ func TestAddPublicReadBinding(t *testing.T) {
 		}
 		if !hasMember(memberOfRole(policy, publicReadRole), allUsers) {
 			t.Error("public-read binding not added")
-		}
-	})
-}
-
-// fakeIAMHandle is a test double for iamV3Handle.
-type fakeIAMHandle struct {
-	policy    *iam.Policy3
-	policyErr error
-	setErr    error
-	setCalls  int
-}
-
-func (f *fakeIAMHandle) Policy(context.Context) (*iam.Policy3, error) {
-	if f.policyErr != nil {
-		return nil, f.policyErr
-	}
-	return f.policy, nil
-}
-
-func (f *fakeIAMHandle) SetPolicy(_ context.Context, p *iam.Policy3) error {
-	f.setCalls++
-	if f.setErr != nil {
-		return f.setErr
-	}
-	f.policy = p
-	return nil
-}
-
-func TestEnsurePublicRead(t *testing.T) {
-	t.Run("grants when not public", func(t *testing.T) {
-		h := &fakeIAMHandle{policy: &iam.Policy3{}}
-		if err := ensurePublicRead(context.Background(), h); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if h.setCalls != 1 {
-			t.Errorf("SetPolicy calls = %d, want 1", h.setCalls)
-		}
-		if !hasMember(memberOfRole(h.policy, publicReadRole), allUsers) {
-			t.Error("allUsers not granted after ensurePublicRead")
-		}
-	})
-
-	t.Run("no SetPolicy when already public", func(t *testing.T) {
-		h := &fakeIAMHandle{policy: &iam.Policy3{
-			Bindings: []*iampb.Binding{
-				{Role: publicReadRole, Members: []string{allUsers}},
-			},
-		}}
-		if err := ensurePublicRead(context.Background(), h); err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if h.setCalls != 0 {
-			t.Errorf("SetPolicy calls = %d, want 0", h.setCalls)
-		}
-	})
-
-	t.Run("propagates Policy error", func(t *testing.T) {
-		want := errors.New("boom")
-		h := &fakeIAMHandle{policyErr: want}
-		if err := ensurePublicRead(context.Background(), h); !errors.Is(err, want) {
-			t.Errorf("err = %v, want %v", err, want)
-		}
-	})
-
-	t.Run("propagates SetPolicy error", func(t *testing.T) {
-		want := errors.New("denied")
-		h := &fakeIAMHandle{policy: &iam.Policy3{}, setErr: want}
-		if err := ensurePublicRead(context.Background(), h); !errors.Is(err, want) {
-			t.Errorf("err = %v, want %v", err, want)
 		}
 	})
 }

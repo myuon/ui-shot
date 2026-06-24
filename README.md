@@ -45,13 +45,25 @@ uishot setup --provider gcs \
 it does not exist, and saves the config.
 
 > [!IMPORTANT]
-> `setup` configures the bucket for **public read**: it grants
-> `allUsers` the `roles/storage.objectViewer` role (and leaves public access
-> prevention inherited rather than enforced). This is required so the returned
-> `https://storage.googleapis.com/...` URLs are accessible from GitHub;
-> otherwise they return HTTP 403. Existing buckets are also granted this binding
-> if they are not already public. Do not point `setup` at a bucket holding
-> private data.
+> Uploaded image URLs (`https://storage.googleapis.com/...`) are only
+> accessible if the bucket grants `allUsers` the `roles/storage.objectViewer`
+> role; otherwise they return HTTP 403. `setup` configures this **safely**:
+>
+> - **A bucket it creates** is made public read automatically (it leaves public
+>   access prevention inherited and grants the `allUsers` binding). This is the
+>   intended design for a dedicated asset bucket.
+> - **An existing bucket** is **never** made public without your say-so. If it
+>   is already public, nothing changes. If it is not, interactive `setup` asks
+>   `Make it public? [y/N]` (default No), and `--non-interactive` leaves it
+>   private and warns that URLs may return 403.
+>
+> Flags to control this explicitly:
+>
+> - `--public` — make the bucket public without asking.
+> - `--no-public` — never grant public read (URLs may return 403).
+>
+> Do not point `--public` at a bucket holding private data: it becomes
+> world-readable.
 
 ### Upload
 
