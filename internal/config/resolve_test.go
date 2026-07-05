@@ -126,3 +126,45 @@ func TestResolveProviderSection(t *testing.T) {
 		t.Errorf("s3 section resolve wrong: %+v", got)
 	}
 }
+
+func TestResolveR2Section(t *testing.T) {
+	cfg := Default()
+	cfg.Provider = "r2"
+	cfg.R2.Bucket = "r2-bucket"
+	cfg.R2.BaseURL = "https://pub-x.r2.dev"
+	cfg.R2.AccountID = "cfg-account"
+
+	clearEnv := func(t *testing.T) {
+		t.Helper()
+		t.Setenv("UISHOT_PROVIDER", "")
+		t.Setenv("UISHOT_BUCKET", "")
+		t.Setenv("UISHOT_BASE_URL", "")
+		t.Setenv("UISHOT_R2_ACCOUNT_ID", "")
+	}
+
+	t.Run("config only", func(t *testing.T) {
+		clearEnv(t)
+		got := Resolve(cfg, "", "", "", "", "", "")
+		if got.Provider != "r2" || got.Bucket != "r2-bucket" || got.BaseURL != "https://pub-x.r2.dev" || got.AccountID != "cfg-account" {
+			t.Errorf("r2 section resolve wrong: %+v", got)
+		}
+	})
+
+	t.Run("account id env overrides config", func(t *testing.T) {
+		clearEnv(t)
+		t.Setenv("UISHOT_R2_ACCOUNT_ID", "env-account")
+		got := Resolve(cfg, "", "", "", "", "", "")
+		if got.AccountID != "env-account" {
+			t.Errorf("AccountID = %q, want env-account", got.AccountID)
+		}
+	})
+
+	t.Run("account id flag overrides env and config", func(t *testing.T) {
+		clearEnv(t)
+		t.Setenv("UISHOT_R2_ACCOUNT_ID", "env-account")
+		got := Resolve(cfg, "", "", "", "", "", "flag-account")
+		if got.AccountID != "flag-account" {
+			t.Errorf("AccountID = %q, want flag-account", got.AccountID)
+		}
+	})
+}

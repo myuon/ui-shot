@@ -131,6 +131,7 @@ func runUpload(ctx context.Context, cmd *cobra.Command, f *uploadFlags) error {
 		FilePath:     f.file,
 		ContentType:  contentType,
 		CacheControl: imageutil.CacheControl,
+		AccountID:    res.AccountID,
 	})
 	if err != nil {
 		return err

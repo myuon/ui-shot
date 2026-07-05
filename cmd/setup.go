@@ -36,13 +36,20 @@ the global config at ~/.config/uishot/config.toml.
 
 GCS requires Application Default Credentials: run
 "gcloud auth application-default login" or set GOOGLE_APPLICATION_CREDENTIALS.
+R2 delegates to the wrangler CLI: install it with "npm install -g wrangler"
+and authenticate with "wrangler login" (or set CLOUDFLARE_API_TOKEN).
 Prompts for any value not passed as a flag (skip prompts with --non-interactive).`,
 		Example: `  # Interactive
   uishot setup --provider gcs
 
   # Non-interactive
   uishot setup --provider gcs --project my-gcp-project \
-    --bucket ui-shot-assets --non-interactive`,
+    --bucket ui-shot-assets --non-interactive
+
+  # Cloudflare R2 (requires wrangler login; base URL is the bucket's
+  # public URL: an r2.dev managed domain or a custom domain)
+  uishot setup --provider r2 --account-id <cloudflare-account-id> \
+    --bucket ui-shot-assets --base-url https://pub-xxxxxxxx.r2.dev`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runSetup(cmd.Context(), cmd, f)
 		},
@@ -113,7 +120,9 @@ func runSetup(ctx context.Context, cmd *cobra.Command, f setupFlags) error {
 	switch res.Provider {
 	case "gcs":
 		return setupGCS(ctx, cmd, f, cfg, path, res)
-	case "s3", "r2":
+	case "r2":
+		return setupR2(ctx, cmd, f, cfg, path, res)
+	case "s3":
 		return fmt.Errorf("provider %q is not implemented yet", res.Provider)
 	default:
 		return fmt.Errorf("unknown provider %q (supported: gcs, s3, r2)", res.Provider)
@@ -193,6 +202,89 @@ func setupGCS(ctx context.Context, cmd *cobra.Command, f setupFlags, cfg *config
 		return err
 	}
 	fmt.Fprintf(cmd.OutOrStdout(), "Saved config to %s\n", path)
+	return nil
+}
+
+const defaultR2Bucket = "ui-shot-assets"
+
+// r2BaseURLDefault returns the base URL to present as the setup default for
+// the final (post-prompt) bucket. Unlike GCS, an R2 public URL (an r2.dev
+// managed domain or a custom domain) cannot be derived from the bucket name,
+// so there is no derived fallback:
+//
+//   - An explicitly provided base URL (--base-url or UISHOT_BASE_URL) is
+//     honored as-is (highest precedence).
+//   - Otherwise, if the final bucket is unchanged from the saved config and the
+//     config has a non-empty base URL, that value is preserved.
+//   - Otherwise (the bucket changed, or there is no saved base URL) the default
+//     is empty and the user must supply the bucket's public URL, so a stale
+//     base URL never points at a different bucket (issue #7).
+func r2BaseURLDefault(res config.Resolved, bucket string) string {
+	if res.BaseURLExplicit {
+		return res.BaseURL
+	}
+	if bucket == res.ConfigBucket && res.ConfigBaseURL != "" {
+		return res.ConfigBaseURL
+	}
+	return ""
+}
+
+func setupR2(ctx context.Context, cmd *cobra.Command, f setupFlags, cfg *config.Config, path string, res config.Resolved) error {
+	prov := res.Provider
+
+	accountID := promptDefault(cmd, f.nonInteractive, "Cloudflare account id", res.AccountID)
+
+	bucket := res.Bucket
+	if bucket == "" {
+		bucket = defaultR2Bucket
+	}
+	bucket = promptDefault(cmd, f.nonInteractive, "Bucket name", bucket)
+
+	// R2 public URLs are not derivable from the bucket name, so the base URL
+	// must be supplied by the user (r2.dev managed domain or custom domain).
+	// A saved base URL is only reused while the bucket is unchanged (issue #7).
+	baseURL := r2BaseURLDefault(res, bucket)
+	baseURL = promptDefault(cmd, f.nonInteractive, "Base URL (public bucket URL, e.g. https://pub-xxxxxxxx.r2.dev)", baseURL)
+
+	p, err := provider.New(prov)
+	if err != nil {
+		return err
+	}
+	result, err := p.Setup(ctx, provider.SetupOptions{
+		Provider:       prov,
+		AccountID:      accountID,
+		Bucket:         bucket,
+		BaseURL:        baseURL,
+		NonInteractive: f.nonInteractive,
+	})
+	if err != nil {
+		return err
+	}
+
+	out := cmd.OutOrStdout()
+	if result.BucketCreated {
+		fmt.Fprintf(out, "Bucket %q created.\n", result.Bucket)
+	}
+	fmt.Fprintf(out, "Note: uploaded URLs only work if %q serves bucket %q publicly.\n", result.BaseURL, result.Bucket)
+	fmt.Fprintf(out, "If not yet public, run `wrangler r2 bucket dev-url enable %s` (development) or attach a custom domain in the Cloudflare dashboard.\n", result.Bucket)
+
+	cfg.Version = 1
+	cfg.Provider = prov
+	if cfg.Defaults.RepoPrefixMode == "" {
+		cfg.Defaults.RepoPrefixMode = "git_remote"
+	}
+	// account id may be empty when wrangler can pick the account itself (a
+	// single-account token); keep any previously saved value in that case.
+	if accountID != "" {
+		cfg.R2.AccountID = accountID
+	}
+	cfg.R2.Bucket = result.Bucket
+	cfg.R2.BaseURL = result.BaseURL
+
+	if err := config.Save(path, cfg); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "Saved config to %s\n", path)
 	return nil
 }
 
