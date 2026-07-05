@@ -101,10 +101,6 @@ func (p *r2Provider) Setup(ctx context.Context, opts SetupOptions) (SetupResult,
 	if opts.Bucket == "" {
 		return SetupResult{}, errors.New("bucket name is required for R2 setup")
 	}
-	// An explicit base URL bypasses the r2.dev flow entirely.
-	if opts.BaseURL == "" && opts.PublicPolicy == PublicNever {
-		return SetupResult{}, fmt.Errorf("base URL is required for R2 setup when --no-public is set; %s", r2BaseURLHint(opts.Bucket))
-	}
 	if err := p.checkWrangler(); err != nil {
 		return SetupResult{}, err
 	}
@@ -139,33 +135,22 @@ func (p *r2Provider) Setup(ctx context.Context, opts SetupOptions) (SetupResult,
 	// precedence over the r2.dev auto-flow. When it is empty we consult the
 	// public policy (mirroring the GCS --public / --no-public safety design):
 	//
-	//   PublicNever  – already returned an error above; never reached here.
+	//   PublicNever  – skip r2.dev; leave base URL empty and report PublicSkipped.
 	//   PublicForce  – enable dev URL unconditionally (--public flag).
 	//   PublicAuto   – for a freshly created bucket enable automatically; for an
-	//                  existing bucket ask ConfirmPublic (or leave manual if nil).
+	//                  existing bucket check if already enabled first (no prompt
+	//                  needed), then ask ConfirmPublic (or leave manual if nil).
 	if baseURL == "" {
 		switch {
-		case opts.PublicPolicy == PublicForce:
+		case opts.PublicPolicy == PublicNever:
+			// Explicit --no-public: skip r2.dev; leave base URL empty.
+			res.PublicSkipped = true
+
+		case opts.PublicPolicy == PublicForce || created:
+			// --public flag or freshly created bucket: enable r2.dev. If enable
+			// fails, fall back to get in case it is already enabled (idempotent).
 			url, err := p.enableDevURL(ctx, opts.AccountID, opts.Bucket)
 			if err != nil {
-				return SetupResult{}, err
-			}
-			baseURL = url
-			res.MadePublic = true
-		case created:
-			// Freshly created asset bucket: enable r2.dev by default.
-			url, err := p.enableDevURL(ctx, opts.AccountID, opts.Bucket)
-			if err != nil {
-				return SetupResult{}, err
-			}
-			baseURL = url
-			res.MadePublic = true
-		case opts.ConfirmPublic != nil && opts.ConfirmPublic():
-			// User confirmed for an existing bucket: try enable first; if the
-			// dev URL is already enabled, get falls back gracefully.
-			url, err := p.enableDevURL(ctx, opts.AccountID, opts.Bucket)
-			if err != nil {
-				// Try get in case it is already enabled.
 				if gurl, gerr := p.getDevURL(ctx, opts.AccountID, opts.Bucket); gerr == nil {
 					url = gurl
 					res.AlreadyPublic = true
@@ -176,11 +161,35 @@ func (p *r2Provider) Setup(ctx context.Context, opts SetupOptions) (SetupResult,
 				res.MadePublic = true
 			}
 			baseURL = url
+
 		default:
-			// No user consent: leave base URL empty and report it must be
-			// set manually. We surface this via PublicSkipped so the caller
-			// can print the appropriate warning.
-			res.PublicSkipped = true
+			// Pre-existing bucket under PublicAuto: check whether r2.dev is
+			// already enabled before prompting — mirrors GCS AlreadyPublic check.
+			if gurl, gerr := p.getDevURL(ctx, opts.AccountID, opts.Bucket); gerr == nil {
+				baseURL = gurl
+				res.AlreadyPublic = true
+			} else if opts.ConfirmPublic != nil && opts.ConfirmPublic() {
+				// User confirmed for an existing bucket: try enable first; if
+				// the dev URL is already enabled, get falls back gracefully.
+				url, err := p.enableDevURL(ctx, opts.AccountID, opts.Bucket)
+				if err != nil {
+					// Try get in case it is already enabled.
+					if gurl2, gerr2 := p.getDevURL(ctx, opts.AccountID, opts.Bucket); gerr2 == nil {
+						url = gurl2
+						res.AlreadyPublic = true
+					} else {
+						return SetupResult{}, err
+					}
+				} else {
+					res.MadePublic = true
+				}
+				baseURL = url
+			} else {
+				// No user consent: leave base URL empty and report it must be
+				// set manually. We surface this via PublicSkipped so the caller
+				// can print the appropriate warning.
+				res.PublicSkipped = true
+			}
 		}
 	}
 

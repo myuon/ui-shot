@@ -255,9 +255,11 @@ func setupR2(ctx context.Context, cmd *cobra.Command, f setupFlags, cfg *config.
 	//
 	//   Explicit base URL (--base-url or env): use it directly; skip r2.dev.
 	//   --public:   provider enables the r2.dev domain unconditionally.
-	//   --no-public: prompt the user for the base URL manually.
-	//   default:    if baseURL is empty, ask whether to enable r2.dev;
-	//               if the user declines, fall back to a manual prompt.
+	//   --no-public: provider skips r2.dev (PublicSkipped); fall back to manual
+	//                base-URL prompt if no URL was supplied.
+	//   default:    provider checks if r2.dev is already enabled (no prompt);
+	//               if not, interactive setup asks whether to enable it;
+	//               if the user declines, fall back to a manual prompt below.
 	baseURL := r2BaseURLDefault(res, bucket)
 	policy := f.publicPolicy()
 
@@ -309,7 +311,7 @@ func setupR2(ctx context.Context, cmd *cobra.Command, f setupFlags, cfg *config.
 	}
 
 	out := cmd.OutOrStdout()
-	reportR2PublicState(out, result)
+	reportR2PublicState(out, result, path)
 
 	cfg.Version = 1
 	cfg.Provider = prov
@@ -334,8 +336,9 @@ func setupR2(ctx context.Context, cmd *cobra.Command, f setupFlags, cfg *config.
 }
 
 // reportR2PublicState prints a message describing the R2 bucket's public
-// access state after setup.
-func reportR2PublicState(out io.Writer, r provider.SetupResult) {
+// access state after setup. path is the config file path used in the warning
+// message so we never hardcode the default location.
+func reportR2PublicState(out io.Writer, r provider.SetupResult, path string) {
 	switch {
 	case r.MadePublic && r.BucketCreated:
 		fmt.Fprintf(out, "Bucket %q created and r2.dev public domain enabled. Uploaded image URLs are publicly accessible.\n", r.Bucket)
@@ -345,11 +348,12 @@ func reportR2PublicState(out io.Writer, r provider.SetupResult) {
 		fmt.Fprintln(out, "Note: r2.dev is rate-limited and intended for development use. For production, attach a custom domain in the Cloudflare dashboard.")
 	case r.AlreadyPublic:
 		fmt.Fprintf(out, "r2.dev public domain is already enabled for bucket %q. Uploaded image URLs are accessible at %s\n", r.Bucket, r.BaseURL)
-	case r.PublicSkipped:
+	case r.PublicSkipped && r.BaseURL == "":
+		// r2.dev was skipped and no base URL was supplied — warn the user.
 		fmt.Fprintf(out, "Warning: the base URL for bucket %q was not configured automatically. Uploaded URLs may not be accessible until you:\n", r.Bucket)
 		fmt.Fprintf(out, "  - run `wrangler r2 bucket dev-url enable %s` (development, rate-limited), or\n", r.Bucket)
 		fmt.Fprintln(out, "  - attach a custom domain in the Cloudflare dashboard (recommended for production),")
-		fmt.Fprintln(out, "  then update base_url in ~/.config/uishot/config.toml.")
+		fmt.Fprintf(out, "  then update base_url in %s.\n", path)
 	default:
 		if r.BaseURL != "" {
 			fmt.Fprintf(out, "Note: uploaded URLs only work if %q serves bucket %q publicly.\n", r.BaseURL, r.Bucket)

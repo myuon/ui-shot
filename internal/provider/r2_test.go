@@ -81,13 +81,18 @@ func TestR2SetupValidation(t *testing.T) {
 		}
 	})
 
-	t.Run("missing base url with --no-public errors with hint", func(t *testing.T) {
-		_, err := p.Setup(context.Background(), SetupOptions{Bucket: "assets", PublicPolicy: PublicNever})
-		if err == nil {
-			t.Fatal("expected error for missing base URL with --no-public")
+	t.Run("missing base url with --no-public sets PublicSkipped (no error)", func(t *testing.T) {
+		// --no-public without --base-url completes setup with PublicSkipped so
+		// the cmd layer can fall back to a manual prompt, matching GCS behavior.
+		res, err := p.Setup(context.Background(), SetupOptions{Bucket: "assets", PublicPolicy: PublicNever})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
 		}
-		if !strings.Contains(err.Error(), "dev-url enable assets") {
-			t.Errorf("err = %v, want hint mentioning `wrangler r2 bucket dev-url enable assets`", err)
+		if !res.PublicSkipped {
+			t.Errorf("PublicSkipped = false, want true when --no-public and no base URL")
+		}
+		if res.BaseURL != "" {
+			t.Errorf("BaseURL = %q, want empty for PublicSkipped result", res.BaseURL)
 		}
 	})
 
@@ -328,6 +333,82 @@ func TestR2SetupDevURL(t *testing.T) {
 		}
 		if want := "https://pub-abc123def456.r2.dev"; res.BaseURL != want {
 			t.Errorf("BaseURL = %q, want %q", res.BaseURL, want)
+		}
+	})
+
+	t.Run("pre-existing bucket with r2.dev already enabled: no prompt, AlreadyPublic", func(t *testing.T) {
+		// dev-url get returns the URL immediately — no consent prompt is needed.
+		f := &fakeWrangler{results: map[string]fakeResult{
+			"r2 bucket dev-url get": {out: fakeGetOut},
+		}}
+		opts := baseOpts
+		opts.PublicPolicy = PublicAuto
+		// ConfirmPublic would panic if called — passing nil ensures it is not.
+		opts.ConfirmPublic = nil
+		res, err := newTestR2Provider(f).Setup(context.Background(), opts)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := "https://pub-abc123def456.r2.dev"; res.BaseURL != want {
+			t.Errorf("BaseURL = %q, want %q", res.BaseURL, want)
+		}
+		if !res.AlreadyPublic {
+			t.Error("AlreadyPublic = false, want true for pre-existing bucket with dev URL already enabled")
+		}
+		if res.PublicSkipped {
+			t.Error("PublicSkipped = true, want false")
+		}
+		// dev-url enable must not have been called.
+		for _, call := range f.calls {
+			if strings.Join(call[:min(len(call), 4)], " ") == "r2 bucket dev-url enable" {
+				t.Errorf("unexpected dev-url enable call: %v", call)
+			}
+		}
+	})
+
+	t.Run("PublicNever (--no-public) without base URL: PublicSkipped, no error", func(t *testing.T) {
+		f := &fakeWrangler{results: map[string]fakeResult{}}
+		opts := baseOpts
+		opts.PublicPolicy = PublicNever
+		res, err := newTestR2Provider(f).Setup(context.Background(), opts)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.PublicSkipped {
+			t.Error("PublicSkipped = false, want true for --no-public without --base-url")
+		}
+		if res.BaseURL != "" {
+			t.Errorf("BaseURL = %q, want empty", res.BaseURL)
+		}
+		// No dev-url calls should be made.
+		for _, call := range f.calls {
+			if strings.Contains(strings.Join(call, " "), "dev-url") {
+				t.Errorf("unexpected dev-url call: %v", call)
+			}
+		}
+	})
+
+	t.Run("PublicForce idempotent: enable fails, get succeeds → AlreadyPublic", func(t *testing.T) {
+		// Re-running setup --public on an already-configured bucket: enable fails
+		// but get returns the existing URL — should succeed with AlreadyPublic.
+		f := &fakeWrangler{results: map[string]fakeResult{
+			"r2 bucket dev-url enable": {out: "some error", err: errors.New("exit status 1")},
+			"r2 bucket dev-url get":    {out: fakeGetOut},
+		}}
+		opts := baseOpts
+		opts.PublicPolicy = PublicForce
+		res, err := newTestR2Provider(f).Setup(context.Background(), opts)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := "https://pub-abc123def456.r2.dev"; res.BaseURL != want {
+			t.Errorf("BaseURL = %q, want %q", res.BaseURL, want)
+		}
+		if !res.AlreadyPublic {
+			t.Error("AlreadyPublic = false, want true (got URL from dev-url get fallback)")
+		}
+		if res.MadePublic {
+			t.Error("MadePublic = true, want false for already-enabled bucket")
 		}
 	})
 

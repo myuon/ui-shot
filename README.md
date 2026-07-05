@@ -82,10 +82,17 @@ it does not exist, and saves the config.
 For Cloudflare R2 (see [R2 prerequisites](#r2-prerequisites)):
 
 ```bash
-# Interactive: setup prompts whether to enable the r2.dev public domain.
+# Interactive: prompts for r2.dev on existing buckets; auto-enables for
+# newly created buckets.
 uishot setup --provider r2 --account-id <cloudflare-account-id>
 
-# Non-interactive with r2.dev auto-enabled (development):
+# Non-interactive, new bucket (r2.dev auto-enabled — development only):
+uishot setup --provider r2 \
+  --account-id <cloudflare-account-id> \
+  --bucket ui-shot-assets \
+  --non-interactive
+
+# Non-interactive, existing bucket with r2.dev forced (development only):
 uishot setup --provider r2 --public \
   --account-id <cloudflare-account-id> \
   --bucket ui-shot-assets \
@@ -105,13 +112,12 @@ R2 `setup` checks the wrangler CLI, creates the bucket if it does not exist
 **r2.dev public domain**: `setup` follows the same safety semantics as GCS
 `--public` / `--no-public`:
 
-- **A bucket it creates** and `--public` is not set: the interactive prompt asks
-  whether to enable the r2.dev domain. Pass `--public` to skip the prompt.
-  Pass `--no-public` to skip r2.dev (you must supply `--base-url` instead).
-- **An existing bucket**: interactive `setup` asks for confirmation; `--public`
-  forces it; `--no-public` skips it (use `--base-url`).
-- In **non-interactive mode**, `--public` must be set explicitly to enable
-  r2.dev automatically.
+- **A bucket it creates**: r2.dev is enabled automatically with no prompt,
+  even in non-interactive mode without `--public` (matching GCS's "fresh bucket
+  = auto-public" design). Pass `--no-public --base-url <url>` to opt out.
+- **An existing bucket**: r2.dev is already enabled → the URL is used
+  automatically (no prompt, no `--public` needed). Not yet enabled → interactive
+  `setup` asks for confirmation; `--public` forces it; `--no-public` skips it.
 
 > [!WARNING]
 > The r2.dev managed domain is **rate-limited** and intended for **development
