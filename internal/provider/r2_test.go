@@ -27,7 +27,7 @@ type fakeResult struct {
 func (f *fakeWrangler) run(_ context.Context, accountID string, args ...string) (string, error) {
 	f.calls = append(f.calls, args)
 	f.accountIDs = append(f.accountIDs, accountID)
-	key := strings.Join(args[:3], " ")
+	key := strings.Join(args[:min(len(args), 3)], " ")
 	res, ok := f.results[key]
 	if !ok {
 		return "", nil
@@ -128,7 +128,7 @@ func TestR2SetupBucketLifecycle(t *testing.T) {
 
 	t.Run("already-exists create error is handled gracefully", func(t *testing.T) {
 		f := &fakeWrangler{results: map[string]fakeResult{
-			"r2 bucket info":   {err: errors.New("exit status 1")},
+			"r2 bucket info":   {out: "The specified bucket does not exist. [code: 10006]", err: errors.New("exit status 1")},
 			"r2 bucket create": {out: "The bucket you tried to create already exists. [code: 10004]", err: errors.New("exit status 1")},
 		}}
 		res, err := newTestR2Provider(f).Setup(context.Background(), opts)
@@ -142,12 +142,28 @@ func TestR2SetupBucketLifecycle(t *testing.T) {
 
 	t.Run("create failure surfaces wrangler output", func(t *testing.T) {
 		f := &fakeWrangler{results: map[string]fakeResult{
-			"r2 bucket info":   {err: errors.New("exit status 1")},
+			"r2 bucket info":   {out: "The specified bucket does not exist. [code: 10006]", err: errors.New("exit status 1")},
 			"r2 bucket create": {out: "Authentication error [code: 10000]", err: errors.New("exit status 1")},
 		}}
 		_, err := newTestR2Provider(f).Setup(context.Background(), opts)
 		if err == nil || !strings.Contains(err.Error(), "Authentication error") {
 			t.Errorf("err = %v, want error containing wrangler output", err)
+		}
+		if err != nil && !strings.Contains(err.Error(), "create bucket") {
+			t.Errorf("err = %v, want create-bucket framing", err)
+		}
+	})
+
+	t.Run("info failure other than missing bucket is surfaced as check error", func(t *testing.T) {
+		f := &fakeWrangler{results: map[string]fakeResult{
+			"r2 bucket info": {out: "Authentication error [code: 10000]", err: errors.New("exit status 1")},
+		}}
+		_, err := newTestR2Provider(f).Setup(context.Background(), opts)
+		if err == nil || !strings.Contains(err.Error(), "check bucket") || !strings.Contains(err.Error(), "Authentication error") {
+			t.Errorf("err = %v, want check-bucket error containing wrangler output", err)
+		}
+		if len(f.calls) != 1 {
+			t.Errorf("calls = %v, want no create attempt after a non-missing-bucket info failure", f.calls)
 		}
 	})
 }
@@ -215,8 +231,8 @@ func TestR2Upload(t *testing.T) {
 		o := opts
 		o.FilePath = filepath.Join(t.TempDir(), "missing.png")
 		_, err := newTestR2Provider(&fakeWrangler{}).Upload(context.Background(), o)
-		if err == nil || !strings.Contains(err.Error(), "open file") {
-			t.Errorf("err = %v, want open-file error", err)
+		if err == nil || !strings.Contains(err.Error(), "stat file") {
+			t.Errorf("err = %v, want stat-file error", err)
 		}
 	})
 
@@ -239,13 +255,39 @@ func TestIsBucketAlreadyExists(t *testing.T) {
 		{"The bucket you tried to create already exists. [code: 10004]", true},
 		{"bucket Already Exists", true},
 		{"[code: 10004]", true},
+		{"[Code: 10004]", true},
 		{"The specified bucket does not exist. [code: 10006]", false},
 		{"Authentication error [code: 10000]", false},
+		// Bare digits elsewhere in the output (ray ids, account ids, ...)
+		// must not be mistaken for the already-exists error code.
+		{"Authentication error [code: 10000] (ray id: 7f2a10004bce)", false},
+		{"account 9310004ab: create failed", false},
+		{"10004", false},
 		{"", false},
 	}
 	for _, tt := range tests {
 		if got := isBucketAlreadyExists(tt.out); got != tt.want {
 			t.Errorf("isBucketAlreadyExists(%q) = %v, want %v", tt.out, got, tt.want)
+		}
+	}
+}
+
+func TestIsBucketNotFound(t *testing.T) {
+	tests := []struct {
+		out  string
+		want bool
+	}{
+		{"The specified bucket does not exist. [code: 10006]", true},
+		{"[code: 10006]", true},
+		{"bucket Does Not Exist", true},
+		{"The bucket you tried to create already exists. [code: 10004]", false},
+		{"Authentication error [code: 10000] (ray id: 7f2a10006bce)", false},
+		{"10006", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := isBucketNotFound(tt.out); got != tt.want {
+			t.Errorf("isBucketNotFound(%q) = %v, want %v", tt.out, got, tt.want)
 		}
 	}
 }

@@ -75,19 +75,22 @@ func (p *r2Provider) Setup(ctx context.Context, opts SetupOptions) (SetupResult,
 	}
 
 	created := false
-	if _, err := p.run(ctx, opts.AccountID, "r2", "bucket", "info", opts.Bucket); err != nil {
-		// The bucket likely does not exist (or info failed for another
-		// reason); try to create it and let create surface real errors such
-		// as authentication failures.
-		out, cerr := p.run(ctx, opts.AccountID, "r2", "bucket", "create", opts.Bucket)
+	if out, err := p.run(ctx, opts.AccountID, "r2", "bucket", "info", opts.Bucket); err != nil {
+		// Only fall through to create when the bucket is genuinely missing;
+		// surfacing other failures (auth, network) as a check error keeps the
+		// root cause visible and mirrors the GCS check/create error split.
+		if !isBucketNotFound(out) {
+			return SetupResult{}, fmt.Errorf("check bucket %q with wrangler: %w\n%s", opts.Bucket, err, strings.TrimSpace(out))
+		}
+		cout, cerr := p.run(ctx, opts.AccountID, "r2", "bucket", "create", opts.Bucket)
 		switch {
 		case cerr == nil:
 			created = true
-		case isBucketAlreadyExists(out):
-			// Someone created it in the meantime (or info failed spuriously):
-			// treat the existing bucket as success.
+		case isBucketAlreadyExists(cout):
+			// Someone created it in the meantime: treat the existing bucket
+			// as success.
 		default:
-			return SetupResult{}, fmt.Errorf("create bucket %q with wrangler: %w\n%s", opts.Bucket, cerr, strings.TrimSpace(out))
+			return SetupResult{}, fmt.Errorf("create bucket %q with wrangler: %w\n%s", opts.Bucket, cerr, strings.TrimSpace(cout))
 		}
 	}
 
@@ -109,7 +112,7 @@ func (p *r2Provider) Upload(ctx context.Context, opts UploadOptions) (string, er
 		return "", err
 	}
 	if _, err := os.Stat(opts.FilePath); err != nil {
-		return "", fmt.Errorf("open file %s: %w", opts.FilePath, err)
+		return "", fmt.Errorf("stat file %s: %w", opts.FilePath, err)
 	}
 
 	args := []string{
@@ -131,8 +134,17 @@ func (p *r2Provider) Upload(ctx context.Context, opts UploadOptions) (string, er
 }
 
 // isBucketAlreadyExists reports whether wrangler's output indicates the bucket
-// already exists (Cloudflare API error code 10004).
+// already exists (Cloudflare API error code 10004). The code match is anchored
+// on wrangler's "[code: 10004]" rendering so that unrelated digits (ray ids,
+// account ids) never false-positive.
 func isBucketAlreadyExists(out string) bool {
 	lower := strings.ToLower(out)
-	return strings.Contains(lower, "already exists") || strings.Contains(out, "10004")
+	return strings.Contains(lower, "already exists") || strings.Contains(lower, "code: 10004")
+}
+
+// isBucketNotFound reports whether wrangler's output indicates the bucket does
+// not exist (Cloudflare API error code 10006).
+func isBucketNotFound(out string) bool {
+	lower := strings.ToLower(out)
+	return strings.Contains(lower, "does not exist") || strings.Contains(lower, "code: 10006")
 }

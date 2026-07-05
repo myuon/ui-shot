@@ -79,7 +79,8 @@ func (f setupFlags) publicPolicy() provider.PublicPolicy {
 	}
 }
 
-const defaultGCSBucket = "ui-shot-assets"
+// defaultBucket is the bucket name suggested by setup for every provider.
+const defaultBucket = "ui-shot-assets"
 
 // gcsBaseURLDefault returns the base URL to present as the setup default for
 // the final (post-prompt) bucket.
@@ -141,7 +142,7 @@ func setupGCS(ctx context.Context, cmd *cobra.Command, f setupFlags, cfg *config
 
 	bucket := res.Bucket
 	if bucket == "" {
-		bucket = defaultGCSBucket
+		bucket = defaultBucket
 	}
 	bucket = promptDefault(cmd, f.nonInteractive, "Bucket name", bucket)
 
@@ -205,8 +206,6 @@ func setupGCS(ctx context.Context, cmd *cobra.Command, f setupFlags, cfg *config
 	return nil
 }
 
-const defaultR2Bucket = "ui-shot-assets"
-
 // r2BaseURLDefault returns the base URL to present as the setup default for
 // the final (post-prompt) bucket. Unlike GCS, an R2 public URL (an r2.dev
 // managed domain or a custom domain) cannot be derived from the bucket name,
@@ -236,7 +235,7 @@ func setupR2(ctx context.Context, cmd *cobra.Command, f setupFlags, cfg *config.
 
 	bucket := res.Bucket
 	if bucket == "" {
-		bucket = defaultR2Bucket
+		bucket = defaultBucket
 	}
 	bucket = promptDefault(cmd, f.nonInteractive, "Bucket name", bucket)
 
@@ -274,7 +273,9 @@ func setupR2(ctx context.Context, cmd *cobra.Command, f setupFlags, cfg *config.
 		cfg.Defaults.RepoPrefixMode = "git_remote"
 	}
 	// account id may be empty when wrangler can pick the account itself (a
-	// single-account token); keep any previously saved value in that case.
+	// single-account token); keep any previously saved value in that case,
+	// mirroring how setupGCS keeps a previously saved project id. Clearing a
+	// saved account id requires editing config.toml by hand.
 	if accountID != "" {
 		cfg.R2.AccountID = accountID
 	}
