@@ -22,9 +22,10 @@ type uploadFlags struct {
 	repo     string
 	commit   string
 	markdown bool
-	provider string
-	bucket   string
-	baseURL  string
+	provider  string
+	bucket    string
+	baseURL   string
+	accountID string
 }
 
 func newUploadCmd() *cobra.Command {
@@ -57,6 +58,7 @@ for supported extensions, settings precedence, and listing uploaded objects.`,
 	cmd.Flags().StringVar(&f.provider, "provider", "", "provider (uses global config if unset)")
 	cmd.Flags().StringVar(&f.bucket, "bucket", "", "bucket override")
 	cmd.Flags().StringVar(&f.baseURL, "base-url", "", "base URL override")
+	cmd.Flags().StringVar(&f.accountID, "account-id", "", "R2 Cloudflare account id override")
 	return cmd
 }
 
@@ -96,7 +98,7 @@ func runUpload(ctx context.Context, cmd *cobra.Command, f *uploadFlags) error {
 	if err != nil {
 		return err
 	}
-	res := config.Resolve(cfg, f.provider, f.bucket, f.baseURL, "", "", "")
+	res := config.Resolve(cfg, f.provider, f.bucket, f.baseURL, "", "", f.accountID)
 	if res.Provider == "" {
 		return errors.New("no provider configured (run `uishot setup` or pass --provider)")
 	}
@@ -131,6 +133,7 @@ func runUpload(ctx context.Context, cmd *cobra.Command, f *uploadFlags) error {
 		FilePath:     f.file,
 		ContentType:  contentType,
 		CacheControl: imageutil.CacheControl,
+		AccountID:    res.AccountID,
 	})
 	if err != nil {
 		return err

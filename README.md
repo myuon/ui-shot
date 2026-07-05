@@ -27,11 +27,35 @@ Requires Go 1.25+.
 |----------|--------|
 | `gcs`    | Implemented (Application Default Credentials) |
 | `s3`     | Designed only — returns "not implemented yet" |
-| `r2`     | Designed only — returns "not implemented yet" |
+| `r2`     | Implemented (delegates to the `wrangler` CLI) |
 
 ### GCS prerequisites
 
 - `gcloud auth application-default login`, or set `GOOGLE_APPLICATION_CREDENTIALS`
+
+### R2 prerequisites
+
+The R2 provider shells out to Cloudflare's official
+[wrangler](https://developers.cloudflare.com/workers/wrangler/) CLI, so
+credential management is delegated to wrangler and uishot never stores
+Cloudflare credentials itself.
+
+- Install wrangler: `npm install -g wrangler`
+- Authenticate: `wrangler login` (OAuth), or set `CLOUDFLARE_API_TOKEN` to an
+  API token with R2 edit permissions (for CI)
+- Find your account id in the Cloudflare dashboard (**R2** page, or any zone
+  overview) and pass it via `--account-id` / `UISHOT_R2_ACCOUNT_ID`; uishot
+  exports it as `CLOUDFLARE_ACCOUNT_ID` when invoking wrangler. It can be
+  omitted if your token only has access to a single account.
+- A **public base URL for the bucket** is required and cannot be derived from
+  the bucket name. Either:
+  - enable the managed r2.dev domain (development use, rate-limited):
+    `wrangler r2 bucket dev-url enable <bucket>` prints the
+    `https://pub-<hash>.r2.dev` URL, or
+  - attach a custom domain to the bucket in the Cloudflare dashboard
+    (recommended for production; enables CDN caching).
+
+  Pass that URL to setup via `--base-url` (or the interactive prompt).
 
 ## Usage
 
@@ -51,6 +75,22 @@ uishot setup --provider gcs \
 
 `setup` verifies ADC, decides the project/bucket/base-url, creates the bucket if
 it does not exist, and saves the config.
+
+For Cloudflare R2 (see [R2 prerequisites](#r2-prerequisites)):
+
+```bash
+uishot setup --provider r2 \
+  --account-id <cloudflare-account-id> \
+  --bucket ui-shot-assets \
+  --base-url https://pub-xxxxxxxx.r2.dev \
+  --non-interactive
+```
+
+R2 `setup` checks the wrangler CLI, creates the bucket if it does not exist
+(`wrangler r2 bucket create`), and saves the config. The base URL must be the
+bucket's public URL (r2.dev managed domain or custom domain); enabling it
+automatically at setup time is tracked in
+[#13](https://github.com/myuon/ui-shot/issues/13).
 
 > [!IMPORTANT]
 > Uploaded image URLs (`https://storage.googleapis.com/...`) are only
@@ -100,6 +140,8 @@ To list what is already stored, query the bucket directly, e.g. for GCS:
 gcloud storage ls gs://<bucket>/<owner>/<repo>/...
 ```
 
+For R2, browse the bucket in the Cloudflare dashboard (**R2** → the bucket).
+
 ### Object key
 
 ```
@@ -118,8 +160,9 @@ command-line flags > environment variables > global config
 ```
 
 Environment variables: `UISHOT_PROVIDER`, `UISHOT_BUCKET`, `UISHOT_BASE_URL`,
-`UISHOT_GCS_PROJECT_ID`, plus the standard AWS/R2 variables for future
-providers.
+`UISHOT_GCS_PROJECT_ID`, `UISHOT_R2_ACCOUNT_ID`, plus the standard AWS
+variables for future providers. R2 authentication itself is handled by
+wrangler (`wrangler login` or `CLOUDFLARE_API_TOKEN`).
 
 ## Development
 

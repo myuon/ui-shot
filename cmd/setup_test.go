@@ -70,6 +70,57 @@ func TestGCSBaseURLDefault(t *testing.T) {
 	})
 }
 
+func TestR2BaseURLDefault(t *testing.T) {
+	// Unlike GCS, an R2 public URL cannot be derived from the bucket name, so
+	// a changed bucket must fall back to empty (forcing user input) instead of
+	// keeping a stale base URL pointing at the previous bucket (issue #7).
+	t.Run("changed bucket without explicit base url is empty", func(t *testing.T) {
+		res := config.Resolved{
+			Bucket:          "bucketB",
+			BaseURL:         "https://pub-a.r2.dev",
+			ConfigBucket:    "bucketA",
+			ConfigBaseURL:   "https://pub-a.r2.dev",
+			BaseURLExplicit: false,
+		}
+		if got := r2BaseURLDefault(res, "bucketB"); got != "" {
+			t.Errorf("r2BaseURLDefault() = %q, want empty (stale base URL must not be reused)", got)
+		}
+	})
+
+	t.Run("unchanged bucket preserves config base url", func(t *testing.T) {
+		res := config.Resolved{
+			Bucket:          "bucketA",
+			BaseURL:         "https://pub-a.r2.dev",
+			ConfigBucket:    "bucketA",
+			ConfigBaseURL:   "https://pub-a.r2.dev",
+			BaseURLExplicit: false,
+		}
+		if got := r2BaseURLDefault(res, "bucketA"); got != "https://pub-a.r2.dev" {
+			t.Errorf("r2BaseURLDefault() = %q, want config base URL", got)
+		}
+	})
+
+	t.Run("explicit base url is honored", func(t *testing.T) {
+		res := config.Resolved{
+			Bucket:          "bucketB",
+			BaseURL:         "https://shots.example.com",
+			ConfigBucket:    "bucketA",
+			ConfigBaseURL:   "https://pub-a.r2.dev",
+			BaseURLExplicit: true,
+		}
+		if got := r2BaseURLDefault(res, "bucketB"); got != "https://shots.example.com" {
+			t.Errorf("r2BaseURLDefault() = %q, want explicit base URL", got)
+		}
+	})
+
+	t.Run("no saved config yields empty default", func(t *testing.T) {
+		res := config.Resolved{Bucket: "fresh"}
+		if got := r2BaseURLDefault(res, "fresh"); got != "" {
+			t.Errorf("r2BaseURLDefault() = %q, want empty", got)
+		}
+	})
+}
+
 // TestSetupBaseURLDefaultRealPath exercises the real code path
 // config.Resolve() -> gcsBaseURLDefault() that setupGCS uses, so the
 // regression is covered end-to-end rather than against a hand-built Resolved.

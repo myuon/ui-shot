@@ -39,7 +39,8 @@ type S3Config struct {
 	Profile string `toml:"profile"`
 }
 
-// R2Config holds the R2 provider settings (designed, not implemented).
+// R2Config holds the Cloudflare R2 provider settings. Credentials are not
+// stored here: the R2 provider delegates authentication to the wrangler CLI.
 type R2Config struct {
 	Bucket    string `toml:"bucket"`
 	BaseURL   string `toml:"base_url"`

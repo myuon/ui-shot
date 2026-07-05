@@ -49,6 +49,8 @@ type UploadOptions struct {
 	ContentType string
 	// CacheControl is the Cache-Control header value to set on the object.
 	CacheControl string
+	// AccountID is the Cloudflare account id (R2 only).
+	AccountID string
 }
 
 // Provider abstracts a storage backend.
@@ -106,7 +108,7 @@ func New(name string) (Provider, error) {
 	case "s3":
 		return &notImplementedProvider{name: "s3"}, nil
 	case "r2":
-		return &notImplementedProvider{name: "r2"}, nil
+		return newR2Provider(), nil
 	case "":
 		return nil, fmt.Errorf("no provider configured (run `uishot setup` or pass --provider)")
 	default:
