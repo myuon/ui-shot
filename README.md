@@ -202,6 +202,53 @@ Authentication is a static Bearer token.
 See [workers/mcp-server/README.md](workers/mcp-server/README.md) for setup,
 deploy steps, and MCP client configuration.
 
+## One-time setup, then upload from anywhere
+
+After the initial setup, no per-session or per-project configuration is needed.
+There are two independent routes:
+
+### CLI (any terminal on the machine you set up)
+
+```bash
+npm install -g wrangler && wrangler login   # credentials live with wrangler
+uishot setup --provider r2 --account-id <cloudflare-account-id>
+```
+
+The config is stored globally (`~/.config/uishot/config.toml`) and wrangler
+keeps its own OAuth token, so every shell on that machine can `uishot upload`
+from then on.
+
+### MCP server (any machine, no CLI or wrangler required)
+
+Deploy the Worker once (see [workers/mcp-server/README.md](workers/mcp-server/README.md)),
+then register it with your MCP client. For Claude Code, pass `--scope user` so
+it is available in **every** project and session, not just the current one:
+
+```bash
+claude mcp add --transport http ui-shot https://<worker>.workers.dev/mcp \
+  --header "Authorization: Bearer <token>" --scope user
+```
+
+Limits: `upload_screenshot` accepts up to 10 MiB per image (base64), and the
+r2.dev public domain is rate-limited (development use) — attach a custom domain
+for heavier use.
+
+### Sharing one bucket with your team
+
+Both routes can point multiple people at the same storage:
+
+- **MCP (easiest)**: one person deploys the Worker; teammates only need the
+  Worker URL and the Bearer token — no Cloudflare account, wrangler, or CLI on
+  their side. Everyone uploads to the same bucket with the same key convention.
+  Note that the token is a single shared secret with no per-user identity;
+  rotate it with `wrangler secret put MCP_AUTH_TOKEN` (all clients must then
+  update their config).
+- **CLI**: invite teammates as members of the Cloudflare account with R2 write
+  permissions. Each of them runs `wrangler login` with their own Cloudflare
+  user and `uishot setup --provider r2` with the same `--account-id` /
+  `--bucket` / base URL. Setup detects the existing bucket and the
+  already-enabled public domain, so it changes nothing remotely.
+
 ## Configuration precedence
 
 ```
