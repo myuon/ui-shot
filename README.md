@@ -190,6 +190,18 @@ The URL is `base_url + "/" + object_key`. Uploaded objects get
 `Cache-Control: public, max-age=31536000, immutable` and a `Content-Type`
 derived from the extension.
 
+## MCP server (Cloudflare Workers + R2)
+
+An MCP (Model Context Protocol) server that serves the same screenshots over
+Streamable HTTP lives in [`workers/mcp-server/`](workers/mcp-server/). It runs
+as a stateless Cloudflare Worker backed by the same R2 bucket and object-key
+convention as the CLI (the CLI itself is not required), and exposes three
+tools: `upload_screenshot`, `list_screenshots`, and `get_screenshot_url`.
+Authentication is a static Bearer token.
+
+See [workers/mcp-server/README.md](workers/mcp-server/README.md) for setup,
+deploy steps, and MCP client configuration.
+
 ## Configuration precedence
 
 ```
