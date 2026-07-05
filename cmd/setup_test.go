@@ -245,3 +245,59 @@ func TestReportPublicState(t *testing.T) {
 		})
 	}
 }
+
+func TestReportR2PublicState(t *testing.T) {
+	const cfgPath = "/home/user/.config/uishot/config.toml"
+	tests := []struct {
+		name       string
+		result     provider.SetupResult
+		wantSubstr string
+		notWant    string
+	}{
+		{
+			name:       "created and made public",
+			result:     provider.SetupResult{Bucket: "assets", BucketCreated: true, MadePublic: true},
+			wantSubstr: "created and r2.dev",
+		},
+		{
+			name:       "existing made public",
+			result:     provider.SetupResult{Bucket: "assets", MadePublic: true, BaseURL: "https://pub-x.r2.dev"},
+			wantSubstr: "r2.dev public domain enabled",
+		},
+		{
+			name:       "already public",
+			result:     provider.SetupResult{Bucket: "assets", AlreadyPublic: true, BaseURL: "https://pub-x.r2.dev"},
+			wantSubstr: "already enabled",
+		},
+		{
+			name:   "skipped with no base url warns and shows config path",
+			result: provider.SetupResult{Bucket: "assets", PublicSkipped: true, BaseURL: ""},
+			// Must mention the config file path (not a hardcoded default).
+			wantSubstr: cfgPath,
+		},
+		{
+			name: "skipped but base url was filled in: no warning",
+			// PublicSkipped=true but BaseURL was set via manual prompt fallback.
+			result:  provider.SetupResult{Bucket: "assets", PublicSkipped: true, BaseURL: "https://custom.example.com"},
+			notWant: "was not configured automatically",
+		},
+		{
+			name:       "explicit base url with no public state: note printed",
+			result:     provider.SetupResult{Bucket: "assets", BaseURL: "https://shots.example.com"},
+			wantSubstr: "only work if",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var sb strings.Builder
+			reportR2PublicState(&sb, tt.result, cfgPath)
+			got := sb.String()
+			if tt.wantSubstr != "" && !strings.Contains(got, tt.wantSubstr) {
+				t.Errorf("output %q does not contain %q", got, tt.wantSubstr)
+			}
+			if tt.notWant != "" && strings.Contains(got, tt.notWant) {
+				t.Errorf("output %q unexpectedly contains %q", got, tt.notWant)
+			}
+		})
+	}
+}

@@ -6,8 +6,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 )
+
+// r2DevURLPattern matches the pub-<hash>.r2.dev URL that wrangler prints for
+// both "dev-url enable" and "dev-url get" output.
+var r2DevURLPattern = regexp.MustCompile(`https://pub-[a-z0-9]+\.r2\.dev`)
 
 // wranglerBin is the Cloudflare CLI binary the R2 provider delegates to.
 const wranglerBin = "wrangler"
@@ -63,12 +68,38 @@ func r2BaseURLHint(bucket string) string {
 	return fmt.Sprintf("R2 has no derivable public URL: enable the r2.dev managed domain with `wrangler r2 bucket dev-url enable %s` (development use) or attach a custom domain in the Cloudflare dashboard, then pass the URL via --base-url", bucket)
 }
 
+// enableDevURL enables the r2.dev managed public domain for the bucket via
+// wrangler (using --force to skip wrangler's own confirmation prompt, since
+// uishot has already obtained the user's consent). It returns the parsed
+// pub-<hash>.r2.dev URL.
+func (p *r2Provider) enableDevURL(ctx context.Context, accountID, bucket string) (string, error) {
+	out, err := p.run(ctx, accountID, "r2", "bucket", "dev-url", "enable", bucket, "--force")
+	if err != nil {
+		return "", fmt.Errorf("enable r2.dev URL for bucket %q with wrangler: %w\n%s", bucket, err, strings.TrimSpace(out))
+	}
+	if url := r2DevURLPattern.FindString(out); url != "" {
+		return url, nil
+	}
+	return "", fmt.Errorf("enable r2.dev URL for bucket %q: could not parse pub-<hash>.r2.dev URL from wrangler output: %s", bucket, strings.TrimSpace(out))
+}
+
+// getDevURL fetches the r2.dev managed public domain status for the bucket via
+// wrangler. It returns the parsed pub-<hash>.r2.dev URL, or an error if the
+// dev URL is not enabled or cannot be parsed.
+func (p *r2Provider) getDevURL(ctx context.Context, accountID, bucket string) (string, error) {
+	out, err := p.run(ctx, accountID, "r2", "bucket", "dev-url", "get", bucket)
+	if err != nil {
+		return "", fmt.Errorf("get r2.dev URL for bucket %q with wrangler: %w\n%s", bucket, err, strings.TrimSpace(out))
+	}
+	if url := r2DevURLPattern.FindString(out); url != "" {
+		return url, nil
+	}
+	return "", fmt.Errorf("get r2.dev URL for bucket %q: dev URL is not enabled or URL could not be parsed from wrangler output: %s", bucket, strings.TrimSpace(out))
+}
+
 func (p *r2Provider) Setup(ctx context.Context, opts SetupOptions) (SetupResult, error) {
 	if opts.Bucket == "" {
 		return SetupResult{}, errors.New("bucket name is required for R2 setup")
-	}
-	if opts.BaseURL == "" {
-		return SetupResult{}, fmt.Errorf("base URL is required for R2 setup; %s", r2BaseURLHint(opts.Bucket))
 	}
 	if err := p.checkWrangler(); err != nil {
 		return SetupResult{}, err
@@ -94,11 +125,80 @@ func (p *r2Provider) Setup(ctx context.Context, opts SetupOptions) (SetupResult,
 		}
 	}
 
-	return SetupResult{
+	baseURL := opts.BaseURL
+	res := SetupResult{
 		Bucket:        opts.Bucket,
-		BaseURL:       opts.BaseURL,
 		BucketCreated: created,
-	}, nil
+	}
+
+	// Determine the base URL. An explicit base URL (already set above) takes
+	// precedence over the r2.dev auto-flow. When it is empty we consult the
+	// public policy (mirroring the GCS --public / --no-public safety design):
+	//
+	//   PublicNever  – skip r2.dev; leave base URL empty and report PublicSkipped.
+	//   PublicForce  – enable dev URL unconditionally (--public flag).
+	//   PublicAuto   – for a freshly created bucket enable automatically; for an
+	//                  existing bucket check if already enabled first (no prompt
+	//                  needed), then ask ConfirmPublic (or leave manual if nil).
+	if baseURL == "" {
+		switch {
+		case opts.PublicPolicy == PublicNever:
+			// Explicit --no-public: skip r2.dev; leave base URL empty.
+			res.PublicSkipped = true
+
+		case opts.PublicPolicy == PublicForce || created:
+			// --public flag or freshly created bucket: enable r2.dev. If enable
+			// fails, fall back to get in case it is already enabled (idempotent).
+			url, err := p.enableDevURL(ctx, opts.AccountID, opts.Bucket)
+			if err != nil {
+				if gurl, gerr := p.getDevURL(ctx, opts.AccountID, opts.Bucket); gerr == nil {
+					url = gurl
+					res.AlreadyPublic = true
+				} else {
+					return SetupResult{}, err
+				}
+			} else {
+				res.MadePublic = true
+			}
+			baseURL = url
+
+		default:
+			// Pre-existing bucket under PublicAuto: check whether r2.dev is
+			// already enabled before prompting — mirrors GCS AlreadyPublic check.
+			if gurl, gerr := p.getDevURL(ctx, opts.AccountID, opts.Bucket); gerr == nil {
+				baseURL = gurl
+				res.AlreadyPublic = true
+			} else if opts.ConfirmPublic != nil && opts.ConfirmPublic() {
+				// User confirmed for an existing bucket: try enable first; if
+				// the dev URL is already enabled, get falls back gracefully.
+				url, err := p.enableDevURL(ctx, opts.AccountID, opts.Bucket)
+				if err != nil {
+					// Try get in case it is already enabled.
+					if gurl2, gerr2 := p.getDevURL(ctx, opts.AccountID, opts.Bucket); gerr2 == nil {
+						url = gurl2
+						res.AlreadyPublic = true
+					} else {
+						return SetupResult{}, err
+					}
+				} else {
+					res.MadePublic = true
+				}
+				baseURL = url
+			} else {
+				// No user consent: leave base URL empty and report it must be
+				// set manually. We surface this via PublicSkipped so the caller
+				// can print the appropriate warning.
+				res.PublicSkipped = true
+			}
+		}
+	}
+
+	if baseURL == "" && !res.PublicSkipped {
+		return SetupResult{}, fmt.Errorf("base URL is required for R2 setup; %s", r2BaseURLHint(opts.Bucket))
+	}
+
+	res.BaseURL = baseURL
+	return res, nil
 }
 
 func (p *r2Provider) Upload(ctx context.Context, opts UploadOptions) (string, error) {

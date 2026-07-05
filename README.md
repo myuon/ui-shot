@@ -48,14 +48,17 @@ Cloudflare credentials itself.
   exports it as `CLOUDFLARE_ACCOUNT_ID` when invoking wrangler. It can be
   omitted if your token only has access to a single account.
 - A **public base URL for the bucket** is required and cannot be derived from
-  the bucket name. Either:
-  - enable the managed r2.dev domain (development use, rate-limited):
-    `wrangler r2 bucket dev-url enable <bucket>` prints the
-    `https://pub-<hash>.r2.dev` URL, or
-  - attach a custom domain to the bucket in the Cloudflare dashboard
-    (recommended for production; enables CDN caching).
-
-  Pass that URL to setup via `--base-url` (or the interactive prompt).
+  the bucket name. `uishot setup` can configure this automatically via the
+  r2.dev managed domain, or you can supply a custom domain:
+  - **Automatic (r2.dev)**: `uishot setup --provider r2 --public` enables the
+    r2.dev managed domain (`https://pub-<hash>.r2.dev`) automatically. The
+    interactive setup prompts for confirmation when no `--public` flag is given.
+    > [!WARNING]
+    > The r2.dev domain is **rate-limited** and intended for **development use
+    > only**. For production workloads, attach a custom domain in the Cloudflare
+    > dashboard (see below) and pass it via `--base-url`.
+  - **Manual**: attach a custom domain to the bucket in the Cloudflare dashboard
+    (recommended for production; enables CDN caching) and pass it via `--base-url`.
 
 ## Usage
 
@@ -79,18 +82,52 @@ it does not exist, and saves the config.
 For Cloudflare R2 (see [R2 prerequisites](#r2-prerequisites)):
 
 ```bash
+# Interactive: prompts for r2.dev on existing buckets; auto-enables for
+# newly created buckets.
+uishot setup --provider r2 --account-id <cloudflare-account-id>
+
+# Non-interactive, new bucket (r2.dev auto-enabled — development only):
 uishot setup --provider r2 \
   --account-id <cloudflare-account-id> \
   --bucket ui-shot-assets \
-  --base-url https://pub-xxxxxxxx.r2.dev \
+  --non-interactive
+
+# Non-interactive, existing bucket with r2.dev forced (development only):
+uishot setup --provider r2 --public \
+  --account-id <cloudflare-account-id> \
+  --bucket ui-shot-assets \
+  --non-interactive
+
+# Non-interactive with an existing custom domain (production):
+uishot setup --provider r2 \
+  --account-id <cloudflare-account-id> \
+  --bucket ui-shot-assets \
+  --base-url https://shots.example.com \
   --non-interactive
 ```
 
 R2 `setup` checks the wrangler CLI, creates the bucket if it does not exist
-(`wrangler r2 bucket create`), and saves the config. The base URL must be the
-bucket's public URL (r2.dev managed domain or custom domain); enabling it
-automatically at setup time is tracked in
-[#13](https://github.com/myuon/ui-shot/issues/13).
+(`wrangler r2 bucket create`), and saves the config.
+
+**r2.dev public domain**: `setup` follows the same safety semantics as GCS
+`--public` / `--no-public`:
+
+- **A bucket it creates**: r2.dev is enabled automatically with no prompt,
+  even in non-interactive mode without `--public` (matching GCS's "fresh bucket
+  = auto-public" design). Pass `--no-public --base-url <url>` to opt out.
+- **An existing bucket**: r2.dev is already enabled → the URL is used
+  automatically (no prompt, no `--public` needed). Not yet enabled → interactive
+  `setup` asks for confirmation; `--public` forces it; `--no-public` skips it.
+
+> [!WARNING]
+> The r2.dev managed domain is **rate-limited** and intended for **development
+> use only**. For production, attach a custom domain to the bucket in the
+> Cloudflare dashboard and pass it via `--base-url`.
+
+Flags controlling this:
+
+- `--public` — enable the r2.dev domain without asking (or use an existing custom domain with `--base-url`).
+- `--no-public` — skip r2.dev; you must supply `--base-url`.
 
 > [!IMPORTANT]
 > Uploaded image URLs (`https://storage.googleapis.com/...`) are only

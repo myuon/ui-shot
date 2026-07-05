@@ -42,14 +42,24 @@ Prompts for any value not passed as a flag (skip prompts with --non-interactive)
 		Example: `  # Interactive
   uishot setup --provider gcs
 
-  # Non-interactive
+  # Non-interactive (GCS)
   uishot setup --provider gcs --project my-gcp-project \
     --bucket ui-shot-assets --non-interactive
 
-  # Cloudflare R2 (requires wrangler login; base URL is the bucket's
-  # public URL: an r2.dev managed domain or a custom domain)
-  uishot setup --provider r2 --account-id <cloudflare-account-id> \
-    --bucket ui-shot-assets --base-url https://pub-xxxxxxxx.r2.dev`,
+  # Cloudflare R2 — interactive: prompts whether to enable r2.dev public domain
+  uishot setup --provider r2 --account-id <cloudflare-account-id>
+
+  # Cloudflare R2 — non-interactive with r2.dev auto-enabled (development only,
+  # rate-limited; use --base-url for a custom domain in production)
+  uishot setup --provider r2 --public \
+    --account-id <cloudflare-account-id> \
+    --bucket ui-shot-assets --non-interactive
+
+  # Cloudflare R2 — non-interactive with a custom domain (production)
+  uishot setup --provider r2 \
+    --account-id <cloudflare-account-id> \
+    --bucket ui-shot-assets \
+    --base-url https://shots.example.com --non-interactive`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runSetup(cmd.Context(), cmd, f)
 		},
@@ -61,8 +71,8 @@ Prompts for any value not passed as a flag (skip prompts with --non-interactive)
 	cmd.Flags().StringVar(&f.profile, "profile", "", "S3 AWS profile")
 	cmd.Flags().StringVar(&f.accountID, "account-id", "", "R2 Cloudflare account id")
 	cmd.Flags().BoolVar(&f.nonInteractive, "non-interactive", false, "do not prompt for input")
-	cmd.Flags().BoolVar(&f.public, "public", false, "make the bucket publicly readable without confirmation (GCS)")
-	cmd.Flags().BoolVar(&f.noPublic, "no-public", false, "do not grant public read on the bucket (GCS)")
+	cmd.Flags().BoolVar(&f.public, "public", false, "GCS: grant public read without confirmation; R2: enable r2.dev managed domain without prompting (development only, rate-limited)")
+	cmd.Flags().BoolVar(&f.noPublic, "no-public", false, "GCS: never grant public read; R2: skip r2.dev (requires --base-url)")
 	cmd.MarkFlagsMutuallyExclusive("public", "no-public")
 	return cmd
 }
@@ -239,11 +249,41 @@ func setupR2(ctx context.Context, cmd *cobra.Command, f setupFlags, cfg *config.
 	}
 	bucket = promptDefault(cmd, f.nonInteractive, "Bucket name", bucket)
 
-	// R2 public URLs are not derivable from the bucket name, so the base URL
-	// must be supplied by the user (r2.dev managed domain or custom domain).
-	// A saved base URL is only reused while the bucket is unchanged (issue #7).
+	// R2 public URLs cannot be derived from the bucket name (unlike GCS). The
+	// strategy depends on the --public / --no-public flags and whether a base
+	// URL is already known:
+	//
+	//   Explicit base URL (--base-url or env): use it directly; skip r2.dev.
+	//   --public:   provider enables the r2.dev domain unconditionally.
+	//   --no-public: provider skips r2.dev (PublicSkipped); fall back to manual
+	//                base-URL prompt if no URL was supplied.
+	//   default:    provider checks if r2.dev is already enabled (no prompt);
+	//               if not, interactive setup asks whether to enable it;
+	//               if the user declines, fall back to a manual prompt below.
 	baseURL := r2BaseURLDefault(res, bucket)
-	baseURL = promptDefault(cmd, f.nonInteractive, "Base URL (public bucket URL, e.g. https://pub-xxxxxxxx.r2.dev)", baseURL)
+	policy := f.publicPolicy()
+
+	// If an explicit base URL is available (from --base-url, env, or the saved
+	// config for the unchanged bucket), present it as the default; it bypasses
+	// the r2.dev flow in the provider.
+	if baseURL != "" {
+		baseURL = promptDefault(cmd, f.nonInteractive, "Base URL (public bucket URL, e.g. https://pub-xxxxxxxx.r2.dev)", baseURL)
+	}
+
+	// confirmPublic is passed to the provider for existing buckets under
+	// PublicAuto. For a newly created bucket the provider enables r2.dev
+	// automatically without asking (matching GCS's "created = auto-public"
+	// behaviour). The callback here decides whether to enable r2.dev for an
+	// *existing* bucket when the user has not passed --public.
+	//
+	// If the user declines, the provider sets PublicSkipped and returns an
+	// empty BaseURL; we then fall back to a manual base-URL prompt below.
+	var confirmPublic func() bool
+	if !f.nonInteractive && policy == provider.PublicAuto && baseURL == "" {
+		confirmPublic = func() bool {
+			return promptYesNo(cmd, "Enable the r2.dev managed public domain for this bucket? (rate-limited; intended for development — use a custom domain for production)")
+		}
+	}
 
 	p, err := provider.New(prov)
 	if err != nil {
@@ -255,17 +295,23 @@ func setupR2(ctx context.Context, cmd *cobra.Command, f setupFlags, cfg *config.
 		Bucket:         bucket,
 		BaseURL:        baseURL,
 		NonInteractive: f.nonInteractive,
+		PublicPolicy:   policy,
+		ConfirmPublic:  confirmPublic,
 	})
 	if err != nil {
 		return err
 	}
 
-	out := cmd.OutOrStdout()
-	if result.BucketCreated {
-		fmt.Fprintf(out, "Bucket %q created.\n", result.Bucket)
+	// If the provider could not determine the base URL automatically (user
+	// declined r2.dev or --no-public was set), fall back to a manual prompt.
+	// In non-interactive mode, leave the base URL empty and warn; uploads will
+	// fail until the user configures it.
+	if result.PublicSkipped && result.BaseURL == "" {
+		result.BaseURL = promptDefault(cmd, f.nonInteractive, "Base URL (public bucket URL, e.g. https://pub-xxxxxxxx.r2.dev — or set later via `uishot setup --base-url`)", "")
 	}
-	fmt.Fprintf(out, "Note: uploaded URLs only work if %q serves bucket %q publicly.\n", result.BaseURL, result.Bucket)
-	fmt.Fprintf(out, "If not yet public, run `wrangler r2 bucket dev-url enable %s` (development) or attach a custom domain in the Cloudflare dashboard.\n", result.Bucket)
+
+	out := cmd.OutOrStdout()
+	reportR2PublicState(out, result, path)
 
 	cfg.Version = 1
 	cfg.Provider = prov
@@ -287,6 +333,32 @@ func setupR2(ctx context.Context, cmd *cobra.Command, f setupFlags, cfg *config.
 	}
 	fmt.Fprintf(out, "Saved config to %s\n", path)
 	return nil
+}
+
+// reportR2PublicState prints a message describing the R2 bucket's public
+// access state after setup. path is the config file path used in the warning
+// message so we never hardcode the default location.
+func reportR2PublicState(out io.Writer, r provider.SetupResult, path string) {
+	switch {
+	case r.MadePublic && r.BucketCreated:
+		fmt.Fprintf(out, "Bucket %q created and r2.dev public domain enabled. Uploaded image URLs are publicly accessible.\n", r.Bucket)
+		fmt.Fprintln(out, "Note: r2.dev is rate-limited and intended for development use. For production, attach a custom domain in the Cloudflare dashboard.")
+	case r.MadePublic:
+		fmt.Fprintf(out, "r2.dev public domain enabled for bucket %q. Uploaded image URLs are publicly accessible at %s\n", r.Bucket, r.BaseURL)
+		fmt.Fprintln(out, "Note: r2.dev is rate-limited and intended for development use. For production, attach a custom domain in the Cloudflare dashboard.")
+	case r.AlreadyPublic:
+		fmt.Fprintf(out, "r2.dev public domain is already enabled for bucket %q. Uploaded image URLs are accessible at %s\n", r.Bucket, r.BaseURL)
+	case r.PublicSkipped && r.BaseURL == "":
+		// r2.dev was skipped and no base URL was supplied — warn the user.
+		fmt.Fprintf(out, "Warning: the base URL for bucket %q was not configured automatically. Uploaded URLs may not be accessible until you:\n", r.Bucket)
+		fmt.Fprintf(out, "  - run `wrangler r2 bucket dev-url enable %s` (development, rate-limited), or\n", r.Bucket)
+		fmt.Fprintln(out, "  - attach a custom domain in the Cloudflare dashboard (recommended for production),")
+		fmt.Fprintf(out, "  then update base_url in %s.\n", path)
+	default:
+		if r.BaseURL != "" {
+			fmt.Fprintf(out, "Note: uploaded URLs only work if %q serves bucket %q publicly.\n", r.BaseURL, r.Bucket)
+		}
+	}
 }
 
 // reportPublicState prints a message describing the bucket's public-read state
