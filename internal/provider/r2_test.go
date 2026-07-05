@@ -27,12 +27,15 @@ type fakeResult struct {
 func (f *fakeWrangler) run(_ context.Context, accountID string, args ...string) (string, error) {
 	f.calls = append(f.calls, args)
 	f.accountIDs = append(f.accountIDs, accountID)
-	key := strings.Join(args[:min(len(args), 3)], " ")
-	res, ok := f.results[key]
-	if !ok {
-		return "", nil
+	// Try progressively shorter prefixes so tests can key on "r2 bucket
+	// dev-url enable" (4 args) as well as "r2 bucket info" (3 args).
+	for n := min(len(args), 4); n >= 1; n-- {
+		key := strings.Join(args[:n], " ")
+		if res, ok := f.results[key]; ok {
+			return res.out, res.err
+		}
 	}
-	return res.out, res.err
+	return "", nil
 }
 
 func newTestR2Provider(f *fakeWrangler) *r2Provider {
@@ -61,10 +64,27 @@ func TestR2SetupValidation(t *testing.T) {
 		}
 	})
 
-	t.Run("missing base url hints at r2.dev", func(t *testing.T) {
-		_, err := p.Setup(context.Background(), SetupOptions{Bucket: "assets"})
+	t.Run("missing base url with no policy sets PublicSkipped", func(t *testing.T) {
+		// With no explicit base URL and the default PublicAuto policy (zero
+		// value) and no ConfirmPublic callback, the provider cannot determine
+		// the public URL and returns PublicSkipped so the cmd layer can fall
+		// back to a manual prompt.
+		res, err := p.Setup(context.Background(), SetupOptions{Bucket: "assets"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.PublicSkipped {
+			t.Errorf("PublicSkipped = false, want true when no base URL and no public policy")
+		}
+		if res.BaseURL != "" {
+			t.Errorf("BaseURL = %q, want empty for PublicSkipped result", res.BaseURL)
+		}
+	})
+
+	t.Run("missing base url with --no-public errors with hint", func(t *testing.T) {
+		_, err := p.Setup(context.Background(), SetupOptions{Bucket: "assets", PublicPolicy: PublicNever})
 		if err == nil {
-			t.Fatal("expected error for missing base URL")
+			t.Fatal("expected error for missing base URL with --no-public")
 		}
 		if !strings.Contains(err.Error(), "dev-url enable assets") {
 			t.Errorf("err = %v, want hint mentioning `wrangler r2 bucket dev-url enable assets`", err)
@@ -166,6 +186,200 @@ func TestR2SetupBucketLifecycle(t *testing.T) {
 			t.Errorf("calls = %v, want no create attempt after a non-missing-bucket info failure", f.calls)
 		}
 	})
+}
+
+// fakeEnableOut is sample output from `wrangler r2 bucket dev-url enable
+// assets --force` that contains the pub-<hash>.r2.dev URL.
+const fakeEnableOut = "Enabling public access for bucket 'assets'...\n✨ Public access enabled at 'https://pub-abc123def456.r2.dev'.\n"
+
+// fakeGetOut is sample output from `wrangler r2 bucket dev-url get assets`
+// when the dev URL is already enabled.
+const fakeGetOut = "Public access is enabled at 'https://pub-abc123def456.r2.dev'.\n"
+
+// fakeGetDisabledOut is sample output from `wrangler r2 bucket dev-url get`
+// when public access is not yet enabled.
+const fakeGetDisabledOut = "Public access via the r2.dev URL is disabled.\n"
+
+func TestR2SetupDevURL(t *testing.T) {
+	baseOpts := SetupOptions{
+		Provider:  "r2",
+		AccountID: "acc123",
+		Bucket:    "assets",
+		// BaseURL intentionally empty so the r2.dev flow is exercised.
+	}
+
+	t.Run("PublicForce enables dev URL and parses URL", func(t *testing.T) {
+		f := &fakeWrangler{results: map[string]fakeResult{
+			"r2 bucket dev-url enable": {out: fakeEnableOut},
+		}}
+		opts := baseOpts
+		opts.PublicPolicy = PublicForce
+		res, err := newTestR2Provider(f).Setup(context.Background(), opts)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := "https://pub-abc123def456.r2.dev"; res.BaseURL != want {
+			t.Errorf("BaseURL = %q, want %q", res.BaseURL, want)
+		}
+		if !res.MadePublic {
+			t.Error("MadePublic = false, want true")
+		}
+		// Verify --force was passed so wrangler does not prompt.
+		got := strings.Join(f.calls[len(f.calls)-1], " ")
+		if !strings.Contains(got, "--force") {
+			t.Errorf("wrangler args %q missing --force", got)
+		}
+	})
+
+	t.Run("PublicAuto and ConfirmPublic=true enables dev URL for existing bucket", func(t *testing.T) {
+		f := &fakeWrangler{results: map[string]fakeResult{
+			"r2 bucket dev-url enable": {out: fakeEnableOut},
+		}}
+		opts := baseOpts
+		opts.PublicPolicy = PublicAuto
+		opts.ConfirmPublic = func() bool { return true }
+		res, err := newTestR2Provider(f).Setup(context.Background(), opts)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := "https://pub-abc123def456.r2.dev"; res.BaseURL != want {
+			t.Errorf("BaseURL = %q, want %q", res.BaseURL, want)
+		}
+		if !res.MadePublic {
+			t.Error("MadePublic = false, want true")
+		}
+	})
+
+	t.Run("PublicAuto ConfirmPublic=true fallback to get when already enabled", func(t *testing.T) {
+		// enable fails (already enabled scenario) → get succeeds.
+		f := &fakeWrangler{results: map[string]fakeResult{
+			"r2 bucket dev-url enable": {out: "some error", err: errors.New("exit status 1")},
+			"r2 bucket dev-url get":    {out: fakeGetOut},
+		}}
+		opts := baseOpts
+		opts.PublicPolicy = PublicAuto
+		opts.ConfirmPublic = func() bool { return true }
+		res, err := newTestR2Provider(f).Setup(context.Background(), opts)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := "https://pub-abc123def456.r2.dev"; res.BaseURL != want {
+			t.Errorf("BaseURL = %q, want %q", res.BaseURL, want)
+		}
+		if !res.AlreadyPublic {
+			t.Error("AlreadyPublic = false, want true (got URL from dev-url get)")
+		}
+	})
+
+	t.Run("opt-out: ConfirmPublic=false sets PublicSkipped with empty BaseURL", func(t *testing.T) {
+		f := &fakeWrangler{results: map[string]fakeResult{}}
+		opts := baseOpts
+		opts.PublicPolicy = PublicAuto
+		opts.ConfirmPublic = func() bool { return false }
+		res, err := newTestR2Provider(f).Setup(context.Background(), opts)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.PublicSkipped {
+			t.Error("PublicSkipped = false, want true when user declines r2.dev")
+		}
+		if res.BaseURL != "" {
+			t.Errorf("BaseURL = %q, want empty after opt-out", res.BaseURL)
+		}
+	})
+
+	t.Run("explicit base URL bypasses r2.dev flow", func(t *testing.T) {
+		// No dev-url calls should be made when BaseURL is already set.
+		f := &fakeWrangler{results: map[string]fakeResult{}}
+		opts := baseOpts
+		opts.BaseURL = "https://shots.example.com"
+		res, err := newTestR2Provider(f).Setup(context.Background(), opts)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if res.BaseURL != "https://shots.example.com" {
+			t.Errorf("BaseURL = %q, want explicit URL", res.BaseURL)
+		}
+		// Only the bucket-info call should have been made.
+		for _, call := range f.calls {
+			if strings.Contains(strings.Join(call, " "), "dev-url") {
+				t.Errorf("unexpected dev-url call: %v", call)
+			}
+		}
+	})
+
+	t.Run("newly created bucket enables dev URL automatically (PublicAuto)", func(t *testing.T) {
+		f := &fakeWrangler{results: map[string]fakeResult{
+			"r2 bucket info":           {out: "The specified bucket does not exist. [code: 10006]", err: errors.New("exit status 1")},
+			"r2 bucket dev-url enable": {out: fakeEnableOut},
+		}}
+		opts := baseOpts
+		opts.PublicPolicy = PublicAuto
+		// No ConfirmPublic — a freshly created bucket is made public automatically.
+		res, err := newTestR2Provider(f).Setup(context.Background(), opts)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !res.BucketCreated {
+			t.Error("BucketCreated = false, want true")
+		}
+		if !res.MadePublic {
+			t.Error("MadePublic = false, want true for newly created bucket")
+		}
+		if want := "https://pub-abc123def456.r2.dev"; res.BaseURL != want {
+			t.Errorf("BaseURL = %q, want %q", res.BaseURL, want)
+		}
+	})
+
+	t.Run("dev URL enable wrangler failure surfaces error", func(t *testing.T) {
+		f := &fakeWrangler{results: map[string]fakeResult{
+			"r2 bucket dev-url enable": {out: "Authentication error [code: 10000]", err: errors.New("exit status 1")},
+		}}
+		opts := baseOpts
+		opts.PublicPolicy = PublicForce
+		_, err := newTestR2Provider(f).Setup(context.Background(), opts)
+		if err == nil || !strings.Contains(err.Error(), "Authentication error") {
+			t.Errorf("err = %v, want error containing wrangler output", err)
+		}
+		if err != nil && !strings.Contains(err.Error(), "enable r2.dev URL") {
+			t.Errorf("err = %v, want enable-r2.dev-URL framing", err)
+		}
+	})
+
+	t.Run("dev URL enable URL parse failure surfaces error", func(t *testing.T) {
+		f := &fakeWrangler{results: map[string]fakeResult{
+			"r2 bucket dev-url enable": {out: "Enabling public access for bucket 'assets'...\nDone.\n"},
+		}}
+		opts := baseOpts
+		opts.PublicPolicy = PublicForce
+		_, err := newTestR2Provider(f).Setup(context.Background(), opts)
+		if err == nil || !strings.Contains(err.Error(), "could not parse pub-") {
+			t.Errorf("err = %v, want parse-failure error", err)
+		}
+	})
+}
+
+func TestR2DevURLPattern(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		// enable output
+		{fakeEnableOut, "https://pub-abc123def456.r2.dev"},
+		// get output
+		{fakeGetOut, "https://pub-abc123def456.r2.dev"},
+		// no URL
+		{fakeGetDisabledOut, ""},
+		{"", ""},
+		// ensures the pattern does not match non-pub- URLs
+		{"Public access at 'https://example.r2.dev'.", ""},
+	}
+	for _, tt := range tests {
+		got := r2DevURLPattern.FindString(tt.input)
+		if got != tt.want {
+			t.Errorf("r2DevURLPattern.FindString(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
 }
 
 func TestR2Upload(t *testing.T) {
