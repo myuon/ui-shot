@@ -1,0 +1,29 @@
+{
+  // Cloudflare Workers MCP server for ui-shot screenshots backed by R2.
+  // After cloning, you need to:
+  //   1. Set the bucket_name below (must match the bucket created by `uishot setup --provider r2`).
+  //      The CLI default bucket name is "ui-shot-assets".
+  //   2. Set PUBLIC_BASE_URL to the bucket's public URL (r2.dev domain or custom domain).
+  //   3. Run: wrangler secret put MCP_AUTH_TOKEN
+  //   4. Run: wrangler deploy
+  "name": "ui-shot-mcp",
+  "main": "./src/index.ts",
+  "compatibility_date": "2026-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "r2_buckets": [
+    {
+      // Binding name referenced in src/index.ts as env.SCREENSHOTS.
+      // Set bucket_name to the bucket used by `uishot` (default: "ui-shot-assets").
+      "binding": "SCREENSHOTS",
+      "bucket_name": "ui-shot-assets"
+    }
+  ],
+  "vars": {
+    // Public base URL for the R2 bucket.
+    // Set this to your r2.dev URL (e.g. https://pub-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.r2.dev)
+    // or a custom domain attached to the bucket.
+    "PUBLIC_BASE_URL": "https://pub-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.r2.dev"
+  }
+  // MCP_AUTH_TOKEN is set via: wrangler secret put MCP_AUTH_TOKEN
+  // Do NOT put secrets in vars; use wrangler secret put instead.
+}

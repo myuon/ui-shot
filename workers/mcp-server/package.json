@@ -1,0 +1,23 @@
+{
+  "name": "ui-shot-mcp-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Cloudflare Workers MCP server for ui-shot screenshots backed by R2",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "agents": "^0.17.3",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260701.1",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.0",
+    "wrangler": "^4.22.0"
+  }
+}
