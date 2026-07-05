@@ -35,10 +35,26 @@ export interface Env {
   MCP_AUTH_TOKEN: string;
 }
 
+/**
+ * Regex for a valid GitHub "owner/repo" slug.
+ * Each segment: alphanumeric, dot, dash, underscore — but not a pure-dot segment (. or ..).
+ */
+const REPO_RE = /^(?!\.{1,2}(?:\/|$))[A-Za-z0-9_.-]+\/(?!\.{1,2}$)[A-Za-z0-9_.-]+$/;
+
+/** Regex for a git commit SHA (7–40 hex digits, case-insensitive). */
+const COMMIT_RE = /^[0-9a-f]{7,40}$/i;
+
+/**
+ * Regex for a safe image name slug.
+ * Allows alphanumerics, dots, dashes, and underscores — no slashes, no .., no URL-special chars.
+ */
+const NAME_RE = /^[A-Za-z0-9_.-]+$/;
+
 /** Shared Zod schema for repo/PR-or-issue identification. */
 const repoSchema = z.object({
   repo: z
     .string()
+    .regex(REPO_RE, 'Expected "owner/repo" with alphanumeric/dot/dash/underscore segments')
     .describe(
       'Repository in "owner/repo" format (e.g. "myuon/ui-shot")',
     ),
@@ -86,11 +102,11 @@ function createServer(env: Env): McpServer {
         ...repoSchema.shape,
         commit: z
           .string()
-          .min(1)
+          .regex(COMMIT_RE, "Expected a git SHA (7–40 hex digits)")
           .describe("Full commit SHA (e.g. from git rev-parse HEAD)"),
         name: z
           .string()
-          .min(1)
+          .regex(NAME_RE, "Alphanumeric, dot, dash, underscore only — no slashes or URL-special chars")
           .describe('Image name without extension (e.g. "booking-detail")'),
         data: z
           .string()
@@ -138,7 +154,8 @@ function createServer(env: Env): McpServer {
     {
       description:
         "List all screenshots stored for a given repository and PR or issue. " +
-        "Returns a JSON array of objects with key and url fields.",
+        "Returns a JSON array of objects with key and url fields. " +
+        "Paginates R2 list results automatically; capped at 10,000 objects total.",
       inputSchema: {
         ...repoSchema.shape,
       },
@@ -147,9 +164,23 @@ function createServer(env: Env): McpServer {
       const { kind, number } = resolveKind(pr, issue);
 
       const prefix = `${repo}/${kind}-${number}/`;
-      const listed = await env.SCREENSHOTS.list({ prefix });
 
-      const results = listed.objects.map((obj) => ({
+      // R2.list() returns at most 1000 objects per page; paginate until done.
+      // Safety cap: stop after 10,000 objects to bound memory and latency.
+      const MAX_OBJECTS = 10_000;
+      const allObjects: R2Object[] = [];
+      let cursor: string | undefined;
+
+      do {
+        const listed = await env.SCREENSHOTS.list({
+          prefix,
+          ...(cursor ? { cursor } : {}),
+        });
+        allObjects.push(...listed.objects);
+        cursor = listed.truncated ? listed.cursor : undefined;
+      } while (cursor !== undefined && allObjects.length < MAX_OBJECTS);
+
+      const results = allObjects.map((obj) => ({
         key: obj.key,
         url: buildPublicUrl(env.PUBLIC_BASE_URL, obj.key),
       }));
@@ -178,14 +209,14 @@ function createServer(env: Env): McpServer {
         ...repoSchema.shape,
         commit: z
           .string()
-          .min(1)
+          .regex(COMMIT_RE, "Expected a git SHA (7–40 hex digits)")
           .describe("Full commit SHA"),
         name: z
           .string()
-          .min(1)
+          .regex(NAME_RE, "Alphanumeric, dot, dash, underscore only — no slashes or URL-special chars")
           .describe('Image name without extension (e.g. "booking-detail")'),
         ext: z
-          .enum([".png", ".jpeg", ".webp", ".gif"])
+          .enum([".png", ".jpg", ".jpeg", ".webp", ".gif"])
           .default(".png")
           .describe("File extension including the leading dot"),
       },

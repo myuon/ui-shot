@@ -105,6 +105,12 @@ export function decodeAndValidateImage(
   // Strip optional data URL prefix (data:image/png;base64,...)
   const raw = base64Data.replace(/^data:[^;]+;base64,/, "");
 
+  // Cheap pre-decode size guard: base64 expands ~4/3, so decoded length ≤ ceil(raw.length * 3/4).
+  // This upper bound avoids allocating up to ~75 MiB only to discard it immediately after.
+  if (raw.length > Math.ceil((MAX_IMAGE_BYTES + 2) / 3) * 4) {
+    throw new Error("Image too large: exceeds the 10 MiB limit");
+  }
+
   let bytes: Uint8Array;
   try {
     const binary = atob(raw);
